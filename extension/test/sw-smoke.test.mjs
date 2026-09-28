@@ -1,0 +1,80 @@
+// Boots the real service worker against a fake `chrome` and a fake Flow tab serving recon fixtures.
+// Checks the wiring (messages, self-check, add job with cost, who may set the cap); no browser needed.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { fixture } from './helpers.mjs';
+
+const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
+const EXT = 'chrome-extension://abc/';
+const data = {};
+let listener;
+const tabs = { 7: { id: 7, url: `https://flow.google.com/project/${PID}` } };
+const driverChecks = [{ name: 'Prompt box', ok: true }];
+
+globalThis.chrome = {
+  runtime: {
+    id: 'abc',
+    getURL: (p) => EXT + p,
+    onMessage: { addListener: (fn) => { listener = fn; } },
+  },
+  storage: {
+    local: {
+      async get(k) { return k in data ? { [k]: structuredClone(data[k]) } : {}; },
+      async set(o) { Object.assign(data, structuredClone(o)); },
+    },
+    onChanged: { addListener() {} },
+  },
+  alarms: { create() {}, onAlarm: { addListener() {} } },
+  tabs: {
+    async get(id) { if (!tabs[id]) throw new Error('no tab'); return tabs[id]; },
+    async update() {},
+    async sendMessage(_id, msg) { return msg.cmd === 'selfCheck' ? { ok: true, value: driverChecks } : { ok: false, error: 'not in smoke test' }; },
+    onUpdated: { addListener() {} },
+  },
+  scripting: {
+    async executeScript({ args: [rpcid] }) {
+      const known = { nzlxg: 'nzlxg', HTrJv: 'HTrJv', yBhWQ: 'yBhWQ', Zzl0ze: 'Zzl0ze' };
+      return [{ result: known[rpcid] ? { status: 200, text: fixture(known[rpcid]) } : { status: 400, text: '' } }];
+    },
+  },
+  action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
+  downloads: {},
+};
+
+await import('../sw.js');
+
+const send = (msg, url = `${EXT}dashboard/index.html`) => new Promise((resolve) => {
+  const handled = listener(msg, { id: 'abc', url }, resolve);
+  if (!handled) resolve({ ignored: true });
+});
+
+test('ignores messages from content scripts on Flow', async () => {
+  assert.deepEqual(await send({ cmd: 'status' }, `https://flow.google.com/project/${PID}`), { ignored: true });
+});
+
+test('binding the work tab runs the self-check against the page RPCs', async () => {
+  const r = await send({ cmd: 'useTab', tabId: 7 });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.ok, true, JSON.stringify(r.value.checks));
+  assert.equal(r.value.balance, 261);
+});
+
+test('adding a job prices it from the catalog', async () => {
+  const r = await send({ cmd: 'addJob', spec: { name: 'fox', prompt: 'a red fox', kind: 'video', input: 'text', resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.recipe, 'abra_t2v_4s_360p');
+  assert.equal(r.value.expectedCost, 4);
+  assert.equal(r.value.state, 'queued');
+});
+
+test('jobs with references are refused until the driver can attach them', async () => {
+  const r = await send({ cmd: 'addJob', spec: { prompt: 'x', input: 'ingredients', refs: ['m1'] } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not supported yet/);
+});
+
+test('only the dashboard can set the cap', async () => {
+  assert.match((await send({ cmd: 'setCap', cap: 10 }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+  assert.equal((await send({ cmd: 'setCap', cap: 10 })).ok, true);
+  assert.equal((await send({ cmd: 'status' })).value.session.cap, 10);
+});

@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flow Pilot</title>
+<link rel="stylesheet" href="../ui.css">
+<body>
+  <h1>Flow Pilot</h1>
+  <div id="halt" class="banner" hidden><span id="haltReason"></span> <button id="clearHalt">Clear halt (after checking Flow)</button></div>
+  <p id="summary"></p>
+  <ul id="checks"></ul>
+
+  <h2>Session credit cap</h2>
+  <p><input id="cap" type="number" min="0" step="1"> <button id="setCap" style="display:inline;width:auto">Set cap</button></p>
+
+  <h2>Add a job</h2>
+  <form id="add">
+    <label>Name</label><input name="name" required>
+    <label>Prompt</label><textarea name="prompt" required></textarea>
+    <label>Kind</label><select name="kind"><option>video</option><option>image</option></select>
+    <label>Resolution</label><select name="resolution"><option>360p</option><option>720p</option></select>
+    <label>Duration</label><select name="durationS"><option>4</option><option>6</option><option>8</option><option>10</option></select>
+    <label>Aspect</label><select name="aspect"><option>16:9</option><option>9:16</option></select>
+    <button>Add to queue</button>
+  </form>
+  <p id="error" class="banner" hidden></p>
+
+  <h2>Queue</h2>
+  <table><thead><tr><th>Name</th><th>State</th><th>Cost</th><th>Prompt</th><th></th></tr></thead><tbody id="jobs"></tbody></table>
+  <script type="module" src="dashboard.js"></script>
+</body>

@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Flow Pilot",
+  "version": "0.1.0",
+  "description": "Queue image and video jobs in Google Flow for one account, driven by people or agents.",
+  "minimum_chrome_version": "120",
+  "background": { "service_worker": "sw.js", "type": "module" },
+  "permissions": ["storage", "scripting", "alarms", "downloads"],
+  "host_permissions": [
+    "https://flow.google.com/*",
+    "https://flow-content.google/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    { "matches": ["https://flow.google.com/project/*"], "js": ["content/driver.js"], "run_at": "document_idle" }
+  ],
+  "action": { "default_title": "Flow Pilot", "default_popup": "popup/popup.html" }
+}
