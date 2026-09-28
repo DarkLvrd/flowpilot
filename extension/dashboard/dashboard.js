@@ -26,7 +26,7 @@ async function render() {
     const btn = (label, cmd) => { const b = document.createElement('button'); b.textContent = label; b.onclick = act(() => send(cmd, { id: j.id })); actions.append(b); };
     if (j.state === 'queued') btn('Approve', 'approve');
     if (['queued', 'approved', 'halted'].includes(j.state)) btn('Cancel', 'cancel');
-    if (j.state === 'failed' && j.clickedAt == null) btn('Re-queue', 'requeue');
+    if (j.state === 'failed' && j.clickedAt == null && !j.mayHaveSubmitted) btn('Re-queue', 'requeue');
     return tr;
   });
   $('jobs').replaceChildren(...rows);

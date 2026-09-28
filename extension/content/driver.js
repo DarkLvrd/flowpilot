@@ -26,9 +26,19 @@
     return text(label) || text(el);
   }
 
-  const button = (name) => $$('button, [role=button]').find((b) => b.getAttribute('aria-label') === name);
-  const agentButton = () => $$('button').find((b) => !b.getAttribute('aria-label') && text(b) === 'Agent');
-  const editor = () => document.querySelector('flow-rich-text-editor .ProseMirror[contenteditable=true]');
+  // Flow's Agent panel has its own prompt box and its own "Start generation" button; anything
+  // typed or clicked there goes to the Agent chat. The driver only ever uses the main composer.
+  const AGENT_PANEL = 'flow-agent-panel, flow-creative-agent-prompt-box';
+  const inAgentPanel = (el) => !!el?.closest(AGENT_PANEL);
+  const agentPanelOpen = () => !!document.querySelector(AGENT_PANEL);
+
+  const composer = () => $$('flow-base-prompt-box').find((b) => !inAgentPanel(b)) || null;
+  const editor = () => composer()?.querySelector('flow-rich-text-editor .ProseMirror[contenteditable=true]') || null;
+  // Composer controls are looked up inside the main composer; header controls anywhere outside the Agent panel.
+  const button = (name, root = document) => $$('button, [role=button]', root)
+    .find((b) => b.getAttribute('aria-label') === name && !inAgentPanel(b));
+  const composerButton = (name) => (composer() ? button(name, composer()) : null);
+  const agentButton = () => $$('button').find((b) => !b.getAttribute('aria-label') && text(b) === 'Agent' && !inAgentPanel(b));
 
   function radios() {
     return $$('[role=radio], input[type=radio]').map((el) => ({
@@ -85,13 +95,14 @@
   }
 
   function selfCheck() {
-    const summary = button(NAMES.settings);
+    const summary = composerButton(NAMES.settings);
     const checks = [
+      ['Agent mode off', !agentPanelOpen()],
       ['Prompt box', !!editor()],
-      ['Start generation button', !!button(NAMES.generate)],
+      ['Start generation button', !!composerButton(NAMES.generate)],
       ['Settings trigger', !!summary],
       ['Settings summary readable', !!summary && /^(Video|Image)\b/.test(text(summary))],
-      ['Add ingredients button', !!button(NAMES.ingredients)],
+      ['Add ingredients button', !!composerButton(NAMES.ingredients)],
       ['Agent toggle', !!agentButton()],
       ['Account details', !!button(NAMES.account)],
       ['On a project page', /^\/project\/[0-9a-f-]{36}$/.test(location.pathname)],
@@ -104,16 +115,26 @@
     return {
       url: location.origin + location.pathname,
       prompt: promptText(),
-      summaryText: text(button(NAMES.settings)),
+      summaryText: text(composerButton(NAMES.settings)),
       costText: costText(),
       input,
-      generateEnabled: clickable(button(NAMES.generate)),
+      agentPanelOpen: agentPanelOpen(),
+      generateEnabled: clickable(composerButton(NAMES.generate)),
       overlayOpen: overlayOpen(),
       blocked: blockedText(),
     };
   }
 
+  // Thrown when the page may have submitted something by itself; the engine halts everything.
+  class Halt extends Error {}
+
+  const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+  // Replaces the prompt with one paste event (typing corrupts long prompts, LESSONS.md #11).
+  // Never uses insertText/keystrokes: ProseMirror turns an inserted line break into an Enter
+  // keypress, and Enter submits. Lines go in as <p> paragraphs so no break is ever typed.
   async function fillPrompt(prompt) {
+    if (agentPanelOpen()) throw new Error('Agent mode is on in Flow; turn it off, then run the job again');
     const ed = editor();
     if (!ed) throw new Error('Prompt box not found');
     ed.focus();
@@ -122,24 +143,27 @@
     const sel = getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
-    // One paste event replaces the whole content at once (typing corrupts long prompts).
     const data = new DataTransfer();
     data.setData('text/plain', prompt);
+    data.setData('text/html', prompt.split('\n').map((line) => `<p>${escapeHtml(line)}</p>`).join(''));
     ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
-    try {
-      await waitFor(() => promptText() === prompt, { timeoutMs: 3000, what: 'the prompt to appear' });
-    } catch {
-      sel.removeAllRanges();
-      range.selectNodeContents(ed);
-      sel.addRange(range);
-      document.execCommand('insertText', false, prompt);
+
+    const outcome = await waitFor(() => {
+      if (agentPanelOpen() || !editor()) return 'left';
+      return promptText() === prompt ? 'filled' : null;
+    }, { timeoutMs: 3000, what: 'the prompt to appear' }).catch(() => 'mismatch');
+
+    if (outcome === 'left') throw new Halt('The composer changed while filling the prompt; something may have been submitted. Check Flow.');
+    if (outcome === 'mismatch') {
+      const now = promptText();
+      if (now === '') throw new Halt('The prompt box emptied itself while filling; something may have been submitted. Check Flow.');
+      throw new Error('Prompt did not match verbatim after pasting');
     }
-    if (promptText() !== prompt) throw new Error('Prompt did not match verbatim after filling');
   }
 
   async function openSettings() {
     if (radio('Video')) return;
-    const trigger = button(NAMES.settings);
+    const trigger = composerButton(NAMES.settings);
     if (!clickable(trigger)) throw new Error('Settings trigger is not clickable');
     trigger.click();
     await waitFor(() => radio('Video'), { what: 'the settings panel' });
@@ -147,7 +171,7 @@
 
   async function closeSettings() {
     if (!radio('Video')) return;
-    button(NAMES.settings).click();
+    composerButton(NAMES.settings).click();
     await waitFor(() => !radio('Video'), { what: 'the settings panel to close' });
   }
 
@@ -162,7 +186,12 @@
   // Sets the composer to the job, reads everything back, leaves the settings panel closed.
   async function prepare(job) {
     const s = job.settings;
-    await fillPrompt(job.prompt);
+    try {
+      await fillPrompt(job.prompt);
+    } catch (e) {
+      if (e instanceof Halt) return { ...readPage(), halt: e.message };
+      throw e;
+    }
     await openSettings();
     await choose(s.kind === 'video' ? 'Video' : 'Image');
     if (s.kind === 'video') {
@@ -182,7 +211,8 @@
   async function clickGenerate() {
     const blocked = blockedText();
     if (blocked) return { ok: false, blocked };
-    const gen = button(NAMES.generate);
+    if (agentPanelOpen()) return { ok: false, error: 'Agent mode is on in Flow' };
+    const gen = composerButton(NAMES.generate);
     if (!clickable(gen)) return { ok: false, error: 'Start generation is not clickable' };
     gen.click();
     try {

@@ -114,6 +114,18 @@ Each lesson is stated as: **what went wrong → the rule v2 follows.**
     → Pure logic (RPC envelope build/parse, job state machine, MP4 check) is unit-tested with
     fixtures, never against the live account.
 
+22. **The Agent panel has its own composer, and a typed line break submits** (Flow Pilot's own
+    first dry run, 2026-09-28). The Agent panel was open (restored from an earlier session). In
+    that state the only prompt box and "Start generation" button on the page belong to the Agent.
+    The driver matched them by label, filled the dry-run prompt, and its `insertText` fallback put
+    in a line break. ProseMirror treats an inserted break as an Enter key, and Enter submits. The
+    test prompt went to the Agent chat. No media was created, but the account balance read 219
+    afterwards against 261 earlier in the session; the cause of that drop was not established.
+    → **The driver only uses the main composer (never inside `flow-agent-panel`), refuses to run
+    while the Agent panel is open, never types or uses `insertText` (one paste, lines as `<p>`),
+    and halts everything if the composer empties or changes while filling.** Live driver tests
+    run behind `recon/dry-run.mjs`, which blocks every non-read-only request in the browser.
+
 ---
 
 ## What v2 is, in one paragraph

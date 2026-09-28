@@ -60,6 +60,17 @@ learns their response shapes from the first real job (spec decision 13).
 - Header: `Account details` button whose label includes the account name/email.
 - Project nav: `All media`, `Images`, `Videos`, `Characters`, `Scenes`, `Tools`, `Bin`.
 
+## Agent mode (seen 2026-09-28)
+
+- When the Agent panel is open (`flow-agent-panel` › `flow-creative-agent-prompt-box`), the main
+  composer is not rendered: the only `flow-base-prompt-box`, ProseMirror editor and
+  `Start generation` button are the Agent's. Its toolbar adds `Agent instructions`
+  (`aria-pressed`), `Settings`; the header has `Open session history`, `Close`.
+- The panel state persists across page loads (it was open on return, with no action taken).
+- The prompt box is ProseMirror (`flow-rich-text-editor .ProseMirror`). Enter submits; an
+  inserted line break counts as Enter. Paste goes through ProseMirror's paste handling instead.
+- The page holds a hidden `textarea#g-recaptcha-response-*` (reCAPTCHA badge). Never touch it.
+
 ## Loaded by the page itself (do not touch)
 
 `www.google.com/recaptcha/enterprise.js` and its anchor iframe load on every project page;

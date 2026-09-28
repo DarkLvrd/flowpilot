@@ -90,6 +90,12 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
       return;
     }
     if (page.blocked) throw new Blocked(page.blocked);
+    if (page.halt) {
+      // Something may have been submitted outside the pre-spend check: record the job as failed
+      // (never re-queueable) and stop everything until a person has looked at Flow.
+      await store.apply(job.id, { type: 'fail', reason: page.halt, mayHaveSubmitted: true });
+      throw new Blocked(page.halt);
+    }
 
     const check = checkBeforeSpend(job, page, await store.session());
     if (!check.ok) {

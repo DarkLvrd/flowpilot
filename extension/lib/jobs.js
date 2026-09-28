@@ -56,9 +56,11 @@ export function transition(job, event, session, now = Date.now()) {
       break;
     case 'fail':
       next.error = event.reason;
+      if (event.mayHaveSubmitted) next.mayHaveSubmitted = true;
       break;
     case 'requeue':
       if (job.clickedAt != null) throw new Error(`Job ${job.id} already clicked once; add a new job instead`);
+      if (job.mayHaveSubmitted) throw new Error(`Job ${job.id} may have been submitted already; check Flow and add a new job instead`);
       next.error = null;
       break;
   }

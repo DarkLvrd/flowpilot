@@ -179,3 +179,17 @@ test('a submitted job with no result after the timeout fails and is not retried'
   assert.match(after.error, /no result/i);
   assert.ok(!world.log.includes('click'));
 });
+
+test('if the composer may have submitted by itself, the job fails for good and everything halts', async () => {
+  const { store, world, runner } = await setup({ page: { halt: 'The prompt box emptied itself while filling' } });
+  const a = await approved(store, 'a');
+  const b = await approved(store, 'b');
+  await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  assert.equal((await store.session()).halted, true);
+  const failed = await store.get(a.id);
+  assert.equal(failed.state, 'failed');
+  assert.equal((await store.get(b.id)).state, 'halted');
+  await store.clearHalt();
+  await assert.rejects(store.apply(a.id, { type: 'requeue' }), /may have/);
+});

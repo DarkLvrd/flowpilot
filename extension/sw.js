@@ -75,8 +75,9 @@ const driver = {
       input: p.input,
       cost: parseCostLine(p.costText ?? ''),
       generateEnabled: p.generateEnabled,
-      overlayOpen: p.overlayOpen,
+      overlayOpen: p.overlayOpen || p.agentPanelOpen,
       blocked: p.blocked,
+      halt: p.halt,
     };
   },
   async clickGenerate() {
