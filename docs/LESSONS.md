@@ -119,8 +119,8 @@ Each lesson is stated as: **what went wrong → the rule v2 follows.**
     that state the only prompt box and "Start generation" button on the page belong to the Agent.
     The driver matched them by label, filled the dry-run prompt, and its `insertText` fallback put
     in a line break. ProseMirror treats an inserted break as an Enter key, and Enter submits. The
-    test prompt went to the Agent chat. No media was created, but the account balance read 219
-    afterwards against 261 earlier in the session; the cause of that drop was not established.
+    test prompt went to the Agent chat. No media was created. (A balance drop seen at the same
+    time, 261 → 219, was the owner's own use of Flow, not this incident.)
     → **The driver only uses the main composer (never inside `flow-agent-panel`), refuses to run
     while the Agent panel is open, never types or uses `insertText` (one paste, lines as `<p>`),
     and halts everything if the composer empties or changes while filling.** Live driver tests
