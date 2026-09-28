@@ -126,6 +126,15 @@ Each lesson is stated as: **what went wrong → the rule v2 follows.**
     and halts everything if the composer empties or changes while filling.** Live driver tests
     run behind `recon/dry-run.mjs`, which blocks every non-read-only request in the browser.
 
+23. **Flow doesn't re-render in a background tab** (Flow Pilot dry run, 2026-09-28). Flow is
+    zoneless Angular: it re-renders on timers and animation frames, which Chrome pauses or
+    throttles for hidden tabs. A click on `Settings trigger` ran its handler but the panel never
+    appeared, so the driver timed out. The same click opened it at once with the tab in front.
+    → **The work tab must be the front tab of its window while a job is prepared and submitted;
+    `prepare` refuses otherwise.** (Unverified: whether a window fully covered by other windows
+    counts as hidden; Chrome on macOS can mark occluded windows hidden.) Found alongside two readback bugs
+    (icon ligatures in radio text, `<br>` lines in the prompt), both now in `recon/FINDINGS.md`.
+
 ---
 
 ## What v2 is, in one paragraph

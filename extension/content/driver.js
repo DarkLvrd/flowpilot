@@ -17,13 +17,20 @@
 
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+  // Material icons are ligature words in the text ("videocam", "crop_16_9"); accessible names skip them.
+  const visibleText = (el) => {
+    if (!el) return '';
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll('mat-icon').forEach((icon) => icon.remove());
+    return text(copy);
+  };
 
   function labelOf(el) {
     if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
     const by = el.getAttribute('aria-labelledby');
     if (by) return by.split(/\s+/).map((id) => text(document.getElementById(id))).join(' ').trim();
     const label = el.closest('label') || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`));
-    return text(label) || text(el);
+    return visibleText(label) || visibleText(el);
   }
 
   // Flow's Agent panel has its own prompt box and its own "Start generation" button; anything
@@ -50,10 +57,18 @@
   // Radio names can carry a description ("360p 360p generates faster…"), so match the first word(s).
   const radio = (want) => radios().find((r) => r.name === want || r.name.startsWith(`${want} `));
 
+  // Reads the prompt back the way it was written: paragraphs and hard breaks are both line breaks.
+  // A multi-line paste lands as one <p> with <br> between lines, not one <p> per line.
+  // ProseMirror's trailing <br> (an empty line's placeholder) is not text.
   function promptText() {
     const ed = editor();
     if (!ed) return null;
-    return $$(':scope > p', ed).map((p) => p.textContent).join('\n');
+    const read = (node) => [...node.childNodes].map((n) => {
+      if (n.nodeType === Node.TEXT_NODE) return n.data;
+      if (n.nodeName === 'BR') return n.classList.contains('ProseMirror-trailingBreak') ? '' : '\n';
+      return n.nodeType === Node.ELEMENT_NODE ? read(n) : '';
+    }).join('');
+    return $$(':scope > p', ed).map(read).join('\n');
   }
 
   function costText() {
@@ -141,8 +156,15 @@
     const range = document.createRange();
     range.selectNodeContents(ed);
     const sel = getSelection();
+    // ProseMirror learns about a new selection from the browser's selectionchange event, which
+    // comes after addRange. Pasting before it lands appends to the old text instead of replacing it.
+    const selected = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Timed out waiting for the prompt box to be selected')), 3000);
+      document.addEventListener('selectionchange', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
     sel.removeAllRanges();
     sel.addRange(range);
+    await selected;
     const data = new DataTransfer();
     data.setData('text/plain', prompt);
     data.setData('text/html', prompt.split('\n').map((line) => `<p>${escapeHtml(line)}</p>`).join(''));
@@ -186,6 +208,9 @@
   // Sets the composer to the job, reads everything back, leaves the settings panel closed.
   async function prepare(job) {
     const s = job.settings;
+    // Flow's zoneless Angular only re-renders on timers/animation frames, which Chrome pauses or
+    // throttles in background tabs: clicks land but the page never updates (LESSONS.md #23).
+    if (document.visibilityState !== 'visible') throw new Error('The Flow work tab must be the front tab of its window');
     try {
       await fillPrompt(job.prompt);
     } catch (e) {

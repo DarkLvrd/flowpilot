@@ -70,6 +70,25 @@ learns their response shapes from the first real job (spec decision 13).
 - The prompt box is ProseMirror (`flow-rich-text-editor .ProseMirror`). Enter submits; an
   inserted line break counts as Enter. Paste goes through ProseMirror's paste handling instead.
 - The page holds a hidden `textarea#g-recaptcha-response-*` (reCAPTCHA badge). Never touch it.
+- Agent mode also lives in the main composer: with the side panel closed, the composer's `Agent`
+  toggle can still be on (`aria-pressed="true"`). Then the composer is wrapped in
+  `flow-creative-agent-prompt-box`, shows `Agent instructions` and `Settings`, and its settings
+  summary is empty. With the toggle off the wrapper is gone (`flow-prompt-box` › … ›
+  `flow-base-prompt-box`). So `flow-creative-agent-prompt-box` anywhere = Agent mode.
+
+## Composer behaviour (dry run, 2026-09-28)
+
+- A multi-line paste lands as **one** `<p>` with `<br>` between lines (hard breaks), not one `<p>`
+  per line. An empty box is `<p><br class="ProseMirror-trailingBreak"></p>`.
+- ProseMirror picks up a script-set selection only on the next `selectionchange` event; pasting
+  before it fires appends to the old text instead of replacing it.
+- Settings panel radios are `button[role=radio]` (`mat-button-toggle`) with no `aria-label`;
+  their text includes the icon ligature (`videocamVideo`, `crop_16_916:9`, `360pinfo`). The
+  accessible name skips the `mat-icon`. The panel is `flow-prompt-box-settings`; the trigger opens
+  and closes it on `click` and has no `aria-expanded`.
+- Flow is zoneless Angular (`window.Zone` undefined). In a background tab (`visibilityState:
+  hidden`) a click on `Settings trigger` runs but the page never re-renders; in the front tab it
+  opens at once. ProseMirror edits still apply in the background.
 
 ## Loaded by the page itself (do not touch)
 

@@ -75,11 +75,15 @@ try {
     const job = { prompt: PROMPT, settings: kind === 'video' && m
       ? { kind, input: 'ingredients', resolution: m[1], durationS: Number(m[2]), aspect: `${m[3]}:${m[4]}`, count: Number(m[5]) }
       : { kind: 'image', aspect: '16:9', count: 1 } };
-    try {
-      const page = await run(`__flowPilotDriver.prepare(${JSON.stringify(job)})`);
-      console.log('prepare →', JSON.stringify({ ...page, prompt: page.prompt === PROMPT ? '<verbatim match>' : page.prompt }, null, 1));
-    } catch (e) {
-      console.log('prepare threw:', e.message.split('\n')[0]);
+    // Twice: the second prompt must replace the first, not append to it.
+    for (const prompt of ['flowpilot dry run, stale text that must be replaced', PROMPT]) {
+      try {
+        const page = await run(`__flowPilotDriver.prepare(${JSON.stringify({ ...job, prompt })})`);
+        console.log('prepare →', JSON.stringify({ ...page, prompt: page.prompt === prompt ? '<verbatim match>' : page.prompt }, null, 1));
+      } catch (e) {
+        console.log('prepare threw:', e.message.split('\n')[0]);
+        break;
+      }
     }
   }
   // Clear the box by deleting the selection (no text insertion, so no Enter can be simulated).
