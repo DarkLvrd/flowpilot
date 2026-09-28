@@ -1,0 +1,5 @@
+node_modules/
+.recon-profile/
+recon/raw/
+*.log
+.DS_Store
