@@ -1,6 +1,6 @@
 // Boots the real service worker against a fake `chrome` and a fake Flow tab serving recon fixtures.
 // Checks the wiring (messages, self-check, add job with cost, who may set the cap); no browser needed.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers.mjs';
 
@@ -45,6 +45,16 @@ globalThis.chrome = {
   },
   action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
   downloads: {},
+};
+
+// The helper bridge's socket: the tests play the helper's side.
+const sockets = [];
+globalThis.WebSocket = class FakeSocket {
+  constructor(url) { this.url = url; this.sent = []; this.listeners = {}; sockets.push(this); }
+  addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+  send(data) { this.sent.push(JSON.parse(data)); }
+  close() { this.emit('close', {}); }
+  emit(type, event) { for (const fn of this.listeners[type] ?? []) fn(event); }
 };
 
 await import('../sw.js');
@@ -124,4 +134,49 @@ test('window focus and tab switches tick only while a job waits for the Flow tab
   assert.equal(await ticked(() => onFocus(1)), true);
   data['flowpilot.lastTick'].waiting = 'x';
   assert.equal(await ticked(() => onActivated({ tabId: 7 })), true);
+});
+
+// ---- Helper bridge ----------------------------------------------------------------------------
+
+const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+after(() => sockets.at(-1)?.close()); // stops the bridge's ping timer so the process can exit
+const helperSays = (m) => sockets.at(-1).emit('message', { data: JSON.stringify(m) });
+const replyTo = (id) => sockets.at(-1).sent.find((m) => m.id === id);
+
+test('the extension connects to the helper on 127.0.0.1 when it starts', async () => {
+  assert.equal(sockets.at(-1).url, 'ws://127.0.0.1:47615/bridge');
+  sockets.at(-1).emit('open', {});
+  await settle();
+  assert.equal((await send({ cmd: 'status' })).value.helper.connected, true);
+});
+
+test('agents through the helper get only the agent commands: never the cap, the halt or the work tab', async () => {
+  helperSays({ id: 1, cmd: 'setCap', args: { cap: 999 } });
+  helperSays({ id: 2, cmd: 'clearHalt', args: {} });
+  helperSays({ id: 3, cmd: 'useTab', args: { tabId: 7 } });
+  helperSays({ id: 4, cmd: 'status', args: {} });
+  await settle();
+  for (const id of [1, 2, 3]) {
+    assert.equal(replyTo(id).ok, false);
+    assert.match(replyTo(id).error, /Agents cannot/);
+  }
+  assert.equal(replyTo(4).ok, true);
+  assert.equal(replyTo(4).value.session.cap, 10);
+});
+
+test('the dashboard gets a pairing code from the helper (the popup cannot)', async () => {
+  const pending = send({ cmd: 'pairCode' });
+  await settle();
+  const ask = sockets.at(-1).sent.find((m) => m.req === 'pairCode');
+  helperSays({ rid: ask.rid, ok: true, value: { code: 'ABCD-EFGH', expiresAt: 1 } });
+  assert.equal((await pending).value.code, 'ABCD-EFGH');
+  assert.match((await send({ cmd: 'pairCode' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});
+
+test('a job may name an absolute output path for the helper to write; anything else is refused when added', async () => {
+  const spec = { name: 'fox', prompt: 'a red fox', kind: 'video', input: 'text', resolution: '360p', durationS: 4 };
+  const ok = await send({ cmd: 'addJob', spec: { ...spec, outputPath: '/Users/me/film/fox.mp4' } });
+  assert.equal(ok.value.outputPath, '/Users/me/film/fox.mp4');
+  assert.match((await send({ cmd: 'addJob', spec: { ...spec, outputPath: 'film/fox.mp4' } })).error, /absolute/);
+  assert.match((await send({ cmd: 'addJob', spec: { ...spec, outputPath: '/Users/me/.zshrc' } })).error, /\.mp4/);
 });

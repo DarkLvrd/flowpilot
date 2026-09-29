@@ -8,6 +8,7 @@ import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost, recipeFor } from './lib/catalog.js';
 import { parseProjectMedia } from './lib/media.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
+import { createBridge, HELPER_PORT } from './lib/bridge.js';
 
 const PROJECT_URL = /^https:\/\/flow\.google\.com\/project\/([0-9a-f-]{36})$/;
 const CONTENT_ORIGIN = 'https://flow-content.google/';
@@ -97,6 +98,8 @@ function toBase64(bytes) {
 }
 
 const MIME = { mp4: 'video/mp4', png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
+const VIDEO_EXT = /\.mp4$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
 
 const files = {
   async fetchBytes(url) {
@@ -106,7 +109,14 @@ const files = {
     return new Uint8Array(await res.arrayBuffer());
   },
   // Default location: Downloads/FlowPilot/<project>/<job-name>.<ext> (docs/SPEC.md decision 5).
+  // A job with an absolute outputPath goes through the helper; its extension follows the real bytes
+  // (an image Flow served as JPEG lands as .jpg). Without the helper it falls back to Downloads,
+  // and the saved path says where it really went.
   async save(job, bytes, ext) {
+    if (job.outputPath && bridge.connected) {
+      const path = job.outputPath.replace(/\.[^./\\]+$/, '') + '.' + ext;
+      return (await bridge.request('writeFile', { path, data: toBase64(bytes) })).path;
+    }
     const filename = `FlowPilot/${safeName(job.projectName ?? job.projectId)}/${safeName(job.name)}.${ext}`;
     const id = await chrome.downloads.download({
       url: `data:${MIME[ext]};base64,${toBase64(bytes)}`, filename, conflictAction: 'uniquify', saveAs: false,
@@ -218,6 +228,12 @@ async function addJob(spec) {
   if (settings.refs.length || settings.firstFrame || settings.lastFrame) {
     throw new Error('Reference images and frames are not supported yet (the driver cannot attach them)');
   }
+  const outputPath = spec.outputPath == null || spec.outputPath === '' ? undefined : String(spec.outputPath);
+  if (outputPath) {
+    if (!/^(\/|[A-Za-z]:[\\/])/.test(outputPath)) throw new Error(`Output path must be absolute: ${outputPath}`);
+    const ext = settings.kind === 'video' ? VIDEO_EXT : IMAGE_EXT;
+    if (!ext.test(outputPath)) throw new Error(`Output path for a ${settings.kind} must end in ${settings.kind === 'video' ? '.mp4' : '.png, .jpg or .webp'}: ${outputPath}`);
+  }
   if (!['16:9', '9:16'].includes(settings.aspect)) throw new Error(`Unsupported aspect: ${settings.aspect}`);
   if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
   const recipe = recipeFor(settings);
@@ -231,11 +247,11 @@ async function addJob(spec) {
   const expectedCost = unit == null ? null : unit * settings.count;
   const modelFamily = recipes?.get(recipe)?.family ?? null;
 
-  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, recipe, expectedCost, modelFamily });
+  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, recipe, expectedCost, modelFamily, outputPath });
 }
 
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.
-const fromDashboard = (sender) => sender.url?.startsWith(chrome.runtime.getURL('dashboard/'));
+const fromDashboard = (sender) => !!sender?.url?.startsWith(chrome.runtime.getURL('dashboard/'));
 
 const handlers = {
   async status() {
@@ -245,6 +261,7 @@ const handlers = {
       workTab: await workTab.get(),
       selfCheck: await local.get('flowpilot.selfCheck', null),
       lastTick: await local.get('flowpilot.lastTick', null),
+      helper: { connected: bridge.connected },
     };
   },
   async useTab({ tabId }) {
@@ -269,7 +286,29 @@ const handlers = {
     if (!fromDashboard(sender)) throw new Error('Only the dashboard can clear a halt');
     return store.clearHalt();
   },
+  // The one-time code a person gives an agent (docs/SPEC.md decision 9); the helper issues it.
+  async pairCode(_msg, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can pair an agent');
+    return bridge.request('pairCode');
+  },
 };
+
+// ---- Helper bridge ------------------------------------------------------------------------
+
+// What agents may do through the helper: the same as a dashboard click, minus the cap, the halt,
+// the work tab and pairing (docs/SPEC.md decisions 7-9).
+const AGENT_COMMANDS = new Set(['status', 'addJob', 'approve', 'cancel', 'requeue', 'retryDownload']);
+
+const bridge = createBridge({
+  url: `ws://127.0.0.1:${HELPER_PORT}/bridge`,
+  async onCommand(cmd, args) {
+    if (!AGENT_COMMANDS.has(cmd)) throw new Error(`Agents cannot ${cmd}; that is done in the dashboard`);
+    const value = await handlers[cmd](args, null);
+    if (!READS.has(cmd)) tick();
+    return value;
+  },
+  onChange: (connected) => local.set('flowpilot.helper', { connected }),
+});
 
 // Only extension pages (popup, dashboard) may send commands; content scripts run on Flow's origin.
 const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
@@ -291,7 +330,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 // one and never reached its write-ahead click: put it back to `approved`.
 store.recover();
 chrome.alarms.create(TICK_ALARM, { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK_ALARM) tick(); });
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name !== TICK_ALARM) return;
+  bridge.start(); // no-op while connected; retries a helper that was down
+  tick();
+});
+bridge.start();
 
 // A job approved in the dashboard waits for the person to bring Flow to the front: go as soon as they do.
 // Only then: every tick asks Flow for status, which stays on the alarm's pace (LESSONS #16).
