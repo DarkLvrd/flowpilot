@@ -5,5 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test \"extension/test/*.test.mjs\" \"helper/test/*.test.mjs\""
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
   }
 }
