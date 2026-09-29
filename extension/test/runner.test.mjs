@@ -283,3 +283,21 @@ test('a download Flow never serves gives up after 15 min instead of waiting fore
   assert.match(after.error, /15 min/);
   assert.ok(!world.log.includes('click'));
 });
+
+test('a result that cannot be saved fails its job (Retry download can try again) and does not stall the others', async () => {
+  const { store, world, runner } = await setup();
+  world.files.save = async () => { throw new Error('EACCES: permission denied, open /Volumes/locked/fox.mp4'); };
+  const a = await approved(store, 'a');
+  await store.apply(a.id, { type: 'start', tabId: 7 });
+  await store.apply(a.id, { type: 'clicked', at: 1, cost: 4 });
+  await store.apply(a.id, { type: 'ready', mediaId: 'm1' });
+  world.server.detail.m1 = ['m1', PID, 'w', 'CAE', ['https://flow-content.google/video/m1?Expires=1&KeyName=k&Signature=s']];
+  const b = await approved(store, 'b');
+
+  const r = await runner.tick();
+  assert.equal(r.error, undefined);
+  const after = await store.get(a.id);
+  assert.equal(after.state, 'failed');
+  assert.match(after.error, /Could not save.*permission denied/);
+  assert.equal((await store.get(b.id)).state, 'submitted');
+});

@@ -89,7 +89,14 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
         await store.apply(job.id, { type: 'fail', reason: `Download rejected: ${check.reason}` });
         continue;
       }
-      const path = await files.save(job, bytes, EXTENSION[check.type]);
+      let path;
+      try {
+        path = await files.save(job, bytes, EXTENSION[check.type]);
+      } catch (e) {
+        // Retrying every tick would re-download the whole result each time; a person can Retry download.
+        await store.apply(job.id, { type: 'fail', reason: `Could not save: ${e.message}` });
+        continue;
+      }
       await store.apply(job.id, { type: 'saved', path, fileType: check.type });
     }
   }
