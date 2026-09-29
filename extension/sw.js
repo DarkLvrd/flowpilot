@@ -79,7 +79,6 @@ const driver = {
       generateEnabled: p.generateEnabled,
       overlayOpen: p.overlayOpen || p.agentPanelOpen,
       blocked: p.blocked,
-      notices: p.notices,
       halt: p.halt,
     };
   },

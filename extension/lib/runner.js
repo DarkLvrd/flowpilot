@@ -11,9 +11,6 @@
 //              (the driver re-checks `expect` in the page and refuses without clicking if it changed)
 //   files    { fetchBytes(url) → Uint8Array, save(job, bytes, ext) → saved path }
 //   workTab  { get() → { tabId, projectId } | null }
-//   noticeCheck  optional { check(texts) → { halt, message?, error? } }: the helper's Jev reading of
-//            Flow messages the driver's block regex didn't match. Additive only: it can halt,
-//            never clear a halt; an error or a missing helper means no extra signal.
 
 import { RPC } from './rpc.js';
 import { parseProjectMedia, parseMediaDetail, findResult } from './media.js';
@@ -38,15 +35,7 @@ function readyUrl(detail, kind) {
   }
 }
 
-export function createRunner({ store, flow, driver, files, workTab, settings, noticeCheck, now = () => Date.now() }) {
-  async function haltOnNotices(notices) {
-    if (!noticeCheck || !notices?.length) return;
-    // A throw (helper unreachable) is no signal, like an error answer; it must not strand the job
-    // in `submitting`, which would block every later submit.
-    const r = await noticeCheck.check(notices).catch(() => ({ halt: false }));
-    if (r.halt) throw new Blocked(`Flow said "${r.message}" (read as an account limit)`);
-  }
-
+export function createRunner({ store, flow, driver, files, workTab, settings, now = () => Date.now() }) {
   async function rpc(key, inner) {
     const r = await flow.call(key, inner);
     if (!r.ok && r.kind === 'blocked') throw new Blocked(r.message);
@@ -124,7 +113,6 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
       return;
     }
     if (page.blocked) throw new Blocked(page.blocked);
-    await haltOnNotices(page.notices);
     if (page.halt) {
       // Something may have been submitted outside the pre-spend check: record the job as failed
       // (never re-queueable) and stop everything until a person has looked at Flow.
@@ -146,7 +134,6 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
     await store.apply(job.id, { type: 'clicked', at: now(), cost: page.cost ?? 0 });
     const click = await driver.clickGenerate(job.tabId, { url: page.url, prompt: job.prompt, summaryText: page.summaryText });
     if (click.blocked) throw new Blocked(click.blocked);
-    await haltOnNotices(click.notices);
     if (click.notClicked) await store.apply(job.id, { type: 'fail', reason: `Not clicked: ${click.error}` });
     else if (!click.ok) await store.apply(job.id, { type: 'fail', reason: `Click may not have happened: ${click.error}. Check Flow; not retried.` });
   }
