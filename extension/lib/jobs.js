@@ -67,6 +67,8 @@ export function transition(job, event, session, now = Date.now()) {
     case 'retryDownload':
       if (!job.mediaId) throw new Error(`Job ${job.id} has no result in Flow to download`);
       next.error = null;
+      // During a halt every active job waits as halted; clearing it resumes the download.
+      if (session.halted) Object.assign(next, { state: 'halted', haltedFrom: 'downloading' });
       break;
   }
   next.history = [...job.history, { state: next.state, at: now, ...(event.reason ? { reason: event.reason } : {}) }];

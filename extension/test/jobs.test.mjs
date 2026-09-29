@@ -155,3 +155,20 @@ test('a failed download can be retried: it goes back to downloading, keeps its m
   await store.apply(other.id, { type: 'fail', reason: 'x' });
   await assert.rejects(store.apply(other.id, { type: 'retryDownload' }), /no result/);
 });
+
+test('a download retried during a halt waits as halted, like every other active job, and goes on once cleared', async () => {
+  const { store } = await storeWithCap();
+  const { id } = await store.add(spec);
+  await store.apply(id, { type: 'approve' });
+  await store.apply(id, { type: 'start', tabId: 7 });
+  await store.apply(id, { type: 'clicked', at: 1000, cost: 4 });
+  await store.apply(id, { type: 'ready', mediaId: 'm1' });
+  await store.apply(id, { type: 'fail', reason: 'Download rejected' });
+  await store.halt('Flow reported UNUSUAL_ACTIVITY');
+
+  const held = await store.apply(id, { type: 'retryDownload' });
+  assert.equal(held.state, 'halted');
+  assert.equal(held.haltedFrom, 'downloading');
+  await store.clearHalt();
+  assert.equal((await store.get(id)).state, 'downloading');
+});
