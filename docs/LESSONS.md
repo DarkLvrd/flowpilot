@@ -131,8 +131,8 @@ Each lesson is stated as: **what went wrong → the rule v2 follows.**
     throttles for hidden tabs. A click on `Settings trigger` ran its handler but the panel never
     appeared, so the driver timed out. The same click opened it at once with the tab in front.
     → **The work tab must be the front tab of its window while a job is prepared and submitted;
-    `prepare` refuses otherwise.** (Unverified: whether a window fully covered by other windows
-    counts as hidden; Chrome on macOS can mark occluded windows hidden.) Found alongside two readback bugs
+    `prepare` refuses otherwise.** (Confirmed 2026-09-28: with the practice window minimized or
+    covered, the Flow tab read `hidden` and `prepare` refused; bringing the window forward fixed it.) Found alongside two readback bugs
     (icon ligatures in radio text, `<br>` lines in the prompt), both now in `recon/FINDINGS.md`.
 
 ---
