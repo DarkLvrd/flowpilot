@@ -4,7 +4,11 @@
 // Credentials never reach disk: request headers and cookies are not recorded, and the
 // page's `at` (XSRF) form field is redacted from request bodies.
 //
-// Usage: node recon/capture.mjs [--port 9333] [--seconds 20] [--no-reload]
+// --generate: for the first live job (spec decision 13). No reload; records every non-GET request
+// to a Google host (the generate call may not be batchexecute) with its HTTP status, and replaces
+// any long token-like string (the reCAPTCHA token Flow mints on Generate) before anything is saved.
+//
+// Usage: node recon/capture.mjs [--port 9333] [--seconds 20] [--no-reload] [--generate]
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -17,8 +21,9 @@ const opt = (name, dflt) => {
 };
 const PORT = Number(opt('port', 9333));
 const SECONDS = Number(opt('seconds', 20));
-const RELOAD = !args.includes('--no-reload');
-const OUT = join(dirname(fileURLToPath(import.meta.url)), 'raw', 'capture');
+const GENERATE = args.includes('--generate');
+const RELOAD = !args.includes('--no-reload') && !GENERATE;
+const OUT = join(dirname(fileURLToPath(import.meta.url)), 'raw', GENERATE ? `generate-${Date.now()}` : 'capture');
 mkdirSync(OUT, { recursive: true });
 
 const targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
@@ -38,12 +43,19 @@ const send = (method, params = {}) => new Promise((ok, fail) => {
 const requests = new Map();
 const saved = [];
 
+// Tokens are long unbroken runs of base64url; ids (uuids, rpc ids) and prompts are not.
+const redactTokens = (text) => text.replace(/[A-Za-z0-9_\-]{120,}/g, (t) => `<redacted ${t.length} chars>`);
+
 function redactBody(body) {
   if (!body) return body;
+  if (!body.includes('=')) return GENERATE ? redactTokens(body) : body; // JSON body, not a form
   const p = new URLSearchParams(body);
   if (p.has('at')) p.set('at', '<redacted>');
+  if (GENERATE) for (const [k, v] of p) p.set(k, redactTokens(v));
   return p.toString();
 }
+
+const isGoogleHost = (host) => /(^|\.)(google\.com|googleapis\.com)$/.test(host);
 
 ws.onmessage = async ({ data }) => {
   const msg = JSON.parse(data);
@@ -55,14 +67,19 @@ ws.onmessage = async ({ data }) => {
   }
   if (msg.method === 'Network.requestWillBeSent') {
     const { requestId, request } = msg.params;
-    if (!request.url.includes('/data/batchexecute')) return;
     const u = new URL(request.url);
+    const batch = request.url.includes('/data/batchexecute');
+    if (GENERATE ? request.method === 'GET' || !isGoogleHost(u.hostname) : !batch) return;
     requests.set(requestId, {
-      rpcids: u.searchParams.get('rpcids'),
+      endpoint: `${request.method} ${u.host}${u.pathname}`,
+      rpcids: u.searchParams.get('rpcids') ?? u.pathname.split('/').pop(),
       build: u.searchParams.get('bl'),
       sourcePath: u.searchParams.get('source-path'),
       body: redactBody(request.postData),
     });
+  }
+  if (msg.method === 'Network.responseReceived' && requests.has(msg.params.requestId)) {
+    requests.get(msg.params.requestId).status = msg.params.response.status;
   }
   if (msg.method === 'Network.loadingFinished') {
     const r = requests.get(msg.params.requestId);
@@ -73,7 +90,7 @@ ws.onmessage = async ({ data }) => {
     } catch (e) {
       r.response = `<unavailable: ${e.message}>`;
     }
-    const file = `${String(saved.length).padStart(2, '0')}-${r.rpcids.replace(/,/g, '+')}.json`;
+    const file = `${String(saved.length).padStart(2, '0')}-${r.rpcids.replace(/[^\w+-]/g, '+').replace(/,/g, '+')}.json`;
     writeFileSync(join(OUT, file), JSON.stringify(r, null, 2));
     saved.push(file);
   }
