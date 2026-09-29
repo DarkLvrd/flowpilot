@@ -12,7 +12,8 @@ const files = readdirSync(capture);
 const load = (rpcid) => JSON.parse(readFileSync(join(capture, files.find((f) => f.endsWith(`-${rpcid}.json`))), 'utf8'));
 
 const redact = (s) => s
-  .replace(/https:\/\/(?:lh3\.googleusercontent\.com|flow\.google\.com)\/asb\/[A-Za-z0-9_\-=]+/g, 'https://lh3.googleusercontent.com/asb/REDACTED')
+  // /asb/<token> links open the media for anyone holding them; Flow serves them from several hosts.
+  .replace(/https:\/\/[\w.-]+\/asb\/[A-Za-z0-9_\-=]+/g, 'https://lh3.googleusercontent.com/asb/REDACTED')
   .replace(/Signature=[A-Za-z0-9_\-]+/g, 'Signature=REDACTED');
 
 // Re-wrap an inner payload as a batchexecute response (lengths are not trusted by the parser).

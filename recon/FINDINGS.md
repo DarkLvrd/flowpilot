@@ -29,7 +29,7 @@ whose third element is the inner JSON as a string.
 | `cPZSdc`, `tRARke` | `[]` | Announcements; community tools gallery | Ignore |
 | `NfrxTb`, `KV2T2d`, `LPzVkd`, `qJcgMc`, `ve2Lsc`, `DTaVef`, `Yizz8d`, `WuwhI` | small | Feature flags / onboarding state | Ignore |
 
-Not seen (they need a real click): the generate RPCs (`eb1hJf`, `nprQif`, `MZZa6b`, `YhhmEf`,
+Not seen (they need a real click; `YhhmEf` and `jwpduf` since seen, see "First live job"): the generate RPCs (`eb1hJf`, `nprQif`, `MZZa6b`, `YhhmEf`,
 `ogiZ0b` per the research report), upload `maseQ`, and operation status `jwpduf`. Flow Pilot
 learns their response shapes from the first real job (spec decision 13).
 
@@ -93,6 +93,29 @@ learns their response shapes from the first real job (spec decision 13).
 - Flow is zoneless Angular (`window.Zone` undefined). In a background tab (`visibilityState:
   hidden`) a click on `Settings trigger` runs but the page never re-renders; in the front tab it
   opens at once. ProseMirror edits still apply in the background.
+
+## First live job (2026-09-28, 4 credits, capture `recon/raw/generate-1790654318959`)
+
+Text-to-video, 360p 4 s, Ingredients mode, no references. Order after the click:
+`recaptcha/enterprise/reload` (Flow's own) → **`YhhmEf`** (generate) → `jwpduf` every few seconds
+→ `Zzl0ze` refresh → `as29s` once done. All HTTP 200.
+
+- `YhhmEf` request: `[[[[null,null,[[["<prompt>"]]]], "<recipe>", 2, null, [.., <2 uuids>], null, null, [4]]],
+  [null, 22, …, "<projectId>", …, ["<reCAPTCHA token>", 1]], ["<clientRequestId>", 2]]`. Flow Pilot
+  never builds this; it is Flow's own button.
+- `YhhmEf` response: `[null, <new balance>, [[<workflowId>, …, [<title>, [ts], …, <mediaId>, …]]],
+  [<media record>]]`. The balance went 269 → **265** (the 4 credits the cost line promised) and the
+  media id (`6a2d2214-…`) is in it from the first response.
+- `jwpduf` (`[null,null,[["<mediaId>"]]]`) returns the media record; its status slot went `[2]`
+  (rendering) → `[3]` (done, plus a duration-like number `492274`) in under a minute.
+- **Flow titles the workflow itself** ("Red fox trotting through snow"); the workflow text is no
+  longer the prompt. The verbatim prompt is inside the media record (`[[["<prompt>"]]]` and after
+  the timestamp). Matching by the workflow text missed the job; the reader now prefers the
+  record's own prompt (fixture `Zzl0ze-first-job.txt`).
+- Thumbnails/previews are `/asb/<token>` links on `contribution.fife.usercontent.google.com`
+  too, not only `lh3.googleusercontent.com`; fixtures redact `/asb/` on any host.
+- `as29s` gives the signed `flow-content.google/video/<mediaId>?Expires=…&Signature=…` URL, as
+  in recon.
 
 ## Loaded by the page itself (do not touch)
 

@@ -1,6 +1,7 @@
 // Project media (Zzl0ze) and media detail (as29s) readers. Shape-based:
 //   media record = [mediaId, projectId, workflowId, …]     (three ids up front)
-//   workflow     = [workflowId, null, null, [prompt, …], projectId]
+//   workflow     = [workflowId, null, null, [title, …], projectId]  (title = prompt on older media;
+//                  Flow now writes its own short title, so the record's own prompt comes first)
 //   recipe       = [recipeId, number, …] somewhere inside a video record
 //   ingredient   = [null, number, mediaId] inside a record
 // Results are matched by id and verbatim prompt, never by grid position (LESSONS.md #14).
@@ -14,14 +15,14 @@ const isId = (v) => typeof v === 'string' && ID.test(v);
 // Returns [{ mediaId, projectId, workflowId, kind, prompt, recipe, ingredientIds, createdAt }].
 export function parseProjectMedia(inner) {
   if (!Array.isArray(inner)) throw new Error('Flow changed: project media is not a list');
-  const prompts = new Map();
+  const titles = new Map();
   const records = [];
   walk(inner, (node) => {
     if (isRecord(node)) {
       records.push(node);
       return false; // don't look for records inside a record
     }
-    if (isWorkflow(node)) prompts.set(node[0], node[3][0]);
+    if (isWorkflow(node)) titles.set(node[0], node[3][0]);
     return true;
   });
   return records.map((r) => {
@@ -31,7 +32,7 @@ export function parseProjectMedia(inner) {
       projectId: r[1],
       workflowId: r[2],
       kind: recipe && VIDEO_RECIPE.test(recipe) ? 'video' : 'image',
-      prompt: prompts.get(r[2]) ?? findNestedPrompt(r),
+      prompt: findNestedPrompt(r) ?? titles.get(r[2]),
       recipe,
       ingredientIds: findIngredients(r),
       createdAt: findTimestamp(r),

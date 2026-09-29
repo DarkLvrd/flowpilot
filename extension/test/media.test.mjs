@@ -55,3 +55,15 @@ test('finds a job result by verbatim prompt, created after the click, not taken 
   assert.equal(findResult(media, { prompt: 'he is riding his house ', since: clickedAt, exclude: [] }), null);
   assert.equal(findResult(media, { prompt: 'a boy on a horse', since: clickedAt, exclude: [] }), null);
 });
+
+// First live job (2026-09-28): Flow gave the workflow its own short title, so the workflow's
+// text is no longer the prompt. The verbatim prompt is inside the media record.
+test('finds a result by its verbatim prompt when Flow titled the workflow differently', () => {
+  const live = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze-first-job'), 'Zzl0ze').data);
+  const fox = live.find((m) => m.mediaId === '6a2d2214-751e-4e3c-9cc7-98867c205121');
+  assert.equal(fox.prompt, 'a red fox trotting through fresh snow at dawn, soft light');
+  assert.equal(fox.kind, 'video');
+  assert.equal(fox.recipe, 'abra_t2v_4s_360p');
+  const hit = findResult(live, { prompt: 'a red fox trotting through fresh snow at dawn, soft light', since: 1790654667771 - 120_000 });
+  assert.equal(hit?.mediaId, '6a2d2214-751e-4e3c-9cc7-98867c205121');
+});
