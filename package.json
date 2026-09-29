@@ -3,6 +3,12 @@
   "private": true,
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "flowpilot": "helper/bin/flowpilot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node --test \"extension/test/*.test.mjs\" \"helper/test/*.test.mjs\""
   },
