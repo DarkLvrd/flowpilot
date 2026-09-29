@@ -316,3 +316,23 @@ test('a rendering video whose detail has only its poster waits, and does not sta
   await runner.tick();
   assert.equal((await store.get(a.id)).state, 'done');
 });
+
+test('a download Flow never serves gives up after 15 min instead of waiting forever (e.g. a retried job that never finished rendering)', async () => {
+  const { store, world, runner } = await setup();
+  const a = await approved(store, 'a');
+  await store.apply(a.id, { type: 'start', tabId: 7 });
+  await store.apply(a.id, { type: 'clicked', at: NOW - 70 * 60_000, cost: 4 });
+  await store.apply(a.id, { type: 'matched', mediaId: 'm1' });
+  await store.apply(a.id, { type: 'fail', reason: 'Still not ready after 60 min: not ready' });
+  await store.apply(a.id, { type: 'retryDownload' }); // detail for m1 keeps answering "not ready"
+
+  await runner.tick();
+  assert.equal((await store.get(a.id)).state, 'downloading');
+
+  const later = createRunner({ store, ...world, settings: { maxInFlight: 2 }, now: () => NOW + 16 * 60_000 });
+  await later.tick();
+  const after = await store.get(a.id);
+  assert.equal(after.state, 'failed');
+  assert.match(after.error, /15 min/);
+  assert.ok(!world.log.includes('click'));
+});

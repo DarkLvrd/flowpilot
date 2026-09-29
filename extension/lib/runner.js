@@ -23,6 +23,7 @@ import { acceptDownload, EXTENSION } from './magic.js';
 const CLOCK_SLACK_MS = 2 * 60_000;       // Flow's timestamps vs our clock
 const RESULT_TIMEOUT_MS = 30 * 60_000;   // no matching record by then → fail, never retry
 const RENDER_TIMEOUT_MS = 60 * 60_000;
+const DOWNLOAD_TIMEOUT_MS = 15 * 60_000; // since the job last entered `downloading`
 
 class Blocked extends Error {}
 
@@ -85,7 +86,13 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
   async function download(jobs) {
     for (const job of jobs.filter((j) => j.state === 'downloading')) {
       const detail = await rpc('mediaDetail', [job.mediaId]);
-      if (!detail.ok) continue;
+      if (!detail.ok) {
+        const since = job.history.findLast((h) => h.state === 'downloading').at;
+        if (now() - since > DOWNLOAD_TIMEOUT_MS) {
+          await store.apply(job.id, { type: 'fail', reason: `Not downloadable after 15 min: ${detail.message}` });
+        }
+        continue;
+      }
       const { url } = parseMediaDetail(detail.data, job.settings.kind);
       const bytes = await files.fetchBytes(url);
       const check = acceptDownload(bytes, job.settings.kind);
