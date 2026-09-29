@@ -26,6 +26,17 @@ const RENDER_TIMEOUT_MS = 60 * 60_000;
 
 class Blocked extends Error {}
 
+// The job's own kind of URL, or null while only other signed URLs are listed (a rendering video may
+// have just its poster). Still throws "Flow changed" when the detail has no signed URL at all.
+function readyUrl(detail, kind) {
+  try {
+    return parseMediaDetail(detail, kind).url;
+  } catch (e) {
+    parseMediaDetail(detail);
+    return null;
+  }
+}
+
 export function createRunner({ store, flow, driver, files, workTab, settings, noticeCheck, now = () => Date.now() }) {
   async function haltOnNotices(notices) {
     if (!noticeCheck || !notices?.length) return;
@@ -63,11 +74,10 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
         job = await store.apply(job.id, { type: 'matched', mediaId: hit.mediaId });
       }
       const detail = await rpc('mediaDetail', [job.mediaId]);
-      if (detail.ok) {
-        parseMediaDetail(detail.data, job.settings.kind); // throws "Flow changed" if there is no signed URL
+      if (detail.ok && readyUrl(detail.data, job.settings.kind)) {
         await store.apply(job.id, { type: 'ready', mediaId: job.mediaId });
       } else if (now() - job.clickedAt > RENDER_TIMEOUT_MS) {
-        await store.apply(job.id, { type: 'fail', reason: `Still not ready after 60 min: ${detail.message}` });
+        await store.apply(job.id, { type: 'fail', reason: `Still not ready after 60 min: ${detail.message ?? `no ${job.settings.kind} URL yet`}` });
       }
     }
   }

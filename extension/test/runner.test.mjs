@@ -296,3 +296,23 @@ test('an approved job waits, unstarted, while the Flow tab is behind another tab
   assert.equal((await store.get(a.id)).state, 'submitted');
   assert.ok(world.log.includes('click'));
 });
+
+// Only finished videos have been seen live; mid-render the detail may list just the poster.
+test('a rendering video whose detail has only its poster waits, and does not stall the other jobs', async () => {
+  const { store, world, runner } = await setup();
+  const a = await approved(store, 'a');
+  await store.apply(a.id, { type: 'start', tabId: 7 });
+  await store.apply(a.id, { type: 'clicked', at: NOW - 10_000, cost: 4 });
+  await store.apply(a.id, { type: 'matched', mediaId: 'm1' });
+  world.server.detail.m1 = ['m1', PID, 'w', 'CAE', ['https://flow-content.google/image/m1?Expires=1&KeyName=k&Signature=s']];
+  const b = await approved(store, 'b');
+
+  const r = await runner.tick();
+  assert.equal(r.error, undefined);
+  assert.equal((await store.get(a.id)).state, 'rendering');
+  assert.equal((await store.get(b.id)).state, 'submitted');
+
+  world.server.detail.m1[4].push('https://flow-content.google/video/m1?Expires=1&KeyName=k&Signature=s');
+  await runner.tick();
+  assert.equal((await store.get(a.id)).state, 'done');
+});
