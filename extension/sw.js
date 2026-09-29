@@ -267,10 +267,13 @@ const handlers = {
 // Only extension pages (popup, dashboard) may send commands; content scripts run on Flow's origin.
 const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
 
+// Reads must not tick: a tick writes storage, which makes the dashboard read status again (a loop).
+const READS = new Set(['status', 'selfCheck']);
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!fromExtensionPage(sender) || !handlers[msg?.cmd]) return false;
   handlers[msg.cmd](msg, sender)
-    .then((value) => { reply({ ok: true, value }); tick(); })
+    .then((value) => { reply({ ok: true, value }); if (!READS.has(msg.cmd)) tick(); })
     .catch((e) => reply({ ok: false, error: e.message }));
   return true;
 });

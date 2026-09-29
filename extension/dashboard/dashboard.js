@@ -5,6 +5,8 @@ const $ = (id) => document.getElementById(id);
 const showError = (e) => { $('error').hidden = !e; $('error').textContent = e?.message ?? ''; };
 const act = (fn) => async (...a) => { try { showError(null); await fn(...a); } catch (e) { showError(e); } render(); };
 
+let shownCap; // the saved cap last written into the box; the box is only refreshed when it changes
+
 async function render() {
   const s = await send('status');
   $('halt').hidden = !s.session.halted;
@@ -12,7 +14,7 @@ async function render() {
   $('summary').textContent = `${s.workTab ? `Work tab: project ${s.workTab.projectId}` : 'No work tab: open a Flow project and click "Use this tab" in the popup.'}`
     + ` · Credits this session: ${s.session.spent} / ${s.session.cap ?? 'no cap'}`
     + (s.selfCheck?.balance != null ? ` · Balance: ${s.selfCheck.balance}` : '');
-  if (document.activeElement !== $('cap')) $('cap').value = s.session.cap ?? '';
+  if (s.session.cap !== shownCap) { shownCap = s.session.cap; $('cap').value = s.session.cap ?? ''; }
   renderChecks($('checks'), s.selfCheck);
 
   const rows = s.jobs.slice().reverse().map((j) => {

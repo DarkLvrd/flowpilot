@@ -7,6 +7,7 @@ import { fixture } from './helpers.mjs';
 const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
 const EXT = 'chrome-extension://abc/';
 const data = {};
+const writes = [];
 let listener;
 const tabs = { 7: { id: 7, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
@@ -20,7 +21,7 @@ globalThis.chrome = {
   storage: {
     local: {
       async get(k) { return k in data ? { [k]: structuredClone(data[k]) } : {}; },
-      async set(o) { Object.assign(data, structuredClone(o)); },
+      async set(o) { writes.push(...Object.keys(o)); Object.assign(data, structuredClone(o)); },
     },
     onChanged: { addListener() {} },
   },
@@ -77,4 +78,15 @@ test('only the dashboard can set the cap', async () => {
   assert.match((await send({ cmd: 'setCap', cap: 10 }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
   assert.equal((await send({ cmd: 'setCap', cap: 10 })).ok, true);
   assert.equal((await send({ cmd: 'status' })).value.session.cap, 10);
+});
+
+// Every storage write wakes the dashboard, which reads `status` again. If reading status wrote
+// anything (it used to run an engine tick), the two would loop hundreds of times a second.
+test('reading status writes nothing to storage', async () => {
+  await send({ cmd: 'status' });
+  await new Promise((r) => setTimeout(r, 50)); // let any tick the message started finish
+  writes.length = 0;
+  await send({ cmd: 'status' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(writes, []);
 });
