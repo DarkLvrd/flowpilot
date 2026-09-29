@@ -98,7 +98,7 @@ function findNestedPrompt(record) {
   let prompt = null;
   walk(record, (node) => {
     if (!prompt && node.length === 1 && Array.isArray(node[0]) && node[0].length === 1
-        && Array.isArray(node[0][0]) && typeof node[0][0][0] === 'string') prompt = node[0][0][0];
+        && Array.isArray(node[0][0]) && node[0][0].length === 1 && typeof node[0][0][0] === 'string') prompt = node[0][0][0];
     return !prompt;
   });
   return prompt;

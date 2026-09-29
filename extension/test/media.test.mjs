@@ -77,3 +77,13 @@ test('media detail gives the URL of the kind asked for: the video, not its poste
   assert.equal(video.mediaId, '6a2d2214-751e-4e3c-9cc7-98867c205121');
   assert.equal(parseMediaDetail(inner, 'image').kind, 'image');
 });
+
+// The prompt's rich-text form is [[["prompt"]]]: exactly one string inside. A nested list that
+// merely starts with a string (a recipe entry, say) is not the prompt.
+test('the verbatim prompt is the one-string [[["…"]]] node, not any nested list that starts with a string', () => {
+  const MID = '11111111-1111-1111-1111-111111111111';
+  const WID = '22222222-2222-2222-2222-222222222222';
+  const inner = [null, [], [[MID, PROJECT, WID, 'CAE', null, [[1_790_569_695, 0], null,
+    [null, [[['abra_t2v_4s_360p', 1, null]]], [[null, null, [[['prompt a']]]]]]]]]];
+  assert.equal(parseProjectMedia(inner)[0].prompt, 'prompt a');
+});
