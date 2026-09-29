@@ -32,7 +32,11 @@ async function render() {
   $('jobs').replaceChildren(...rows);
 }
 
-$('setCap').onclick = act(() => send('setCap', { cap: Number($('cap').value) }));
+$('setCap').onclick = act(async () => {
+  // Number('') is 0: an empty box must not silently become a cap of 0.
+  if ($('cap').value.trim() === '') throw new Error('Type a number of credits first');
+  await send('setCap', { cap: Number($('cap').value) });
+});
 $('clearHalt').onclick = act(() => send('clearHalt'));
 $('add').onsubmit = act(async (ev) => {
   ev.preventDefault();
