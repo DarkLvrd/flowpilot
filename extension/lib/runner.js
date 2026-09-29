@@ -5,7 +5,9 @@
 // Dependencies (all injected, so this is testable without a browser):
 //   store    lib/jobs.js store
 //   flow     { call(rpcKey, inner) → parseBatchResponse-style result } bound to the work tab
-//   driver   { prepare(job) → page observation, clickGenerate() → { ok, blocked?, error? } }
+//   driver   { prepare(job) → page observation,
+//              clickGenerate(tabId, expect) → { ok, blocked?, error?, notClicked? } }
+//              (the driver re-checks `expect` in the page and refuses without clicking if it changed)
 //   files    { fetchBytes(url) → Uint8Array, save(job, bytes, ext) → saved path }
 //   workTab  { get() → { tabId, projectId } | null }
 
@@ -98,15 +100,21 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
     }
 
     const check = checkBeforeSpend(job, page, await store.session());
+    const bound = await workTab.get();
+    if (bound?.tabId !== job.tabId || bound?.projectId !== job.projectId) {
+      check.ok = false;
+      check.problems.push('the work tab changed while the job was being prepared');
+    }
     if (!check.ok) {
       await store.apply(job.id, { type: 'fail', reason: `Not submitted: ${check.problems.join('; ')}` });
       return;
     }
     // Write-ahead: from here on this job can never be clicked again.
     await store.apply(job.id, { type: 'clicked', at: now(), cost: page.cost ?? 0 });
-    const click = await driver.clickGenerate();
+    const click = await driver.clickGenerate(job.tabId, { url: page.url, prompt: job.prompt, summaryText: page.summaryText });
     if (click.blocked) throw new Blocked(click.blocked);
-    if (!click.ok) await store.apply(job.id, { type: 'fail', reason: `Click may not have happened: ${click.error}. Check Flow; not retried.` });
+    if (click.notClicked) await store.apply(job.id, { type: 'fail', reason: `Not clicked: ${click.error}` });
+    else if (!click.ok) await store.apply(job.id, { type: 'fail', reason: `Click may not have happened: ${click.error}. Check Flow; not retried.` });
   }
 
   return {

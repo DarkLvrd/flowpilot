@@ -233,12 +233,22 @@
     return { ...after, input: withPanel.input, costText: withPanel.costText };
   }
 
-  async function clickGenerate() {
+  // `expect` is what the pre-spend check approved ({ url, prompt, summaryText }). Everything is
+  // re-read here, in the same synchronous step as the click, so nothing can change in between.
+  async function clickGenerate(expect) {
     const blocked = blockedText();
     if (blocked) return { ok: false, blocked };
-    if (agentPanelOpen()) return { ok: false, error: 'Agent mode is on in Flow' };
     const gen = composerButton(NAMES.generate);
-    if (!clickable(gen)) return { ok: false, error: 'Start generation is not clickable' };
+    const changed = [
+      agentPanelOpen() && 'Agent mode is on in Flow',
+      document.visibilityState !== 'visible' && 'the work tab is not the front tab',
+      location.origin + location.pathname !== expect?.url && `the page is ${location.pathname}`,
+      promptText() !== expect?.prompt && 'the prompt changed',
+      text(composerButton(NAMES.settings)) !== expect?.summaryText && 'the settings changed',
+      overlayOpen() && 'an overlay is open',
+      !clickable(gen) && 'Start generation is not clickable',
+    ].filter(Boolean);
+    if (changed.length) return { ok: false, notClicked: true, error: changed.join('; ') };
     gen.click();
     try {
       // Flow clears the prompt box once it accepts a generation; a block shows as an alert.

@@ -93,6 +93,39 @@ test('a failed pre-spend check fails the job and never clicks', async () => {
   assert.equal((await store.session()).spent, 0);
 });
 
+test('the click goes to the job’s own tab, with what the pre-spend check saw', async () => {
+  const { store, world, runner } = await setup({ page: { summaryText: 'Video · 360p · 4s crop_16_9 x1' } });
+  const job = await approved(store, 'a');
+  let args;
+  world.driver.clickGenerate = async (...a) => { args = a; return { ok: true }; };
+  await runner.tick();
+  assert.deepEqual(args, [7, { url: `https://flow.google.com/project/${PID}`, prompt: job.prompt, summaryText: 'Video · 360p · 4s crop_16_9 x1' }]);
+});
+
+test('a work tab rebound during prepare fails the job before the point of no return', async () => {
+  const { store, world, runner } = await setup();
+  const job = await approved(store, 'a');
+  const prepare = world.driver.prepare;
+  world.driver.prepare = async (j) => { world.workTab.get = async () => ({ tabId: 8, projectId: PID }); return prepare(j); };
+  await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'failed');
+  assert.equal(after.clickedAt, null);
+  assert.match(after.error, /work tab/);
+});
+
+test('a driver that refuses at click time fails the job as not clicked', async () => {
+  const { store, world, runner } = await setup();
+  const job = await approved(store, 'a');
+  world.driver.clickGenerate = async () => ({ ok: false, notClicked: true, error: 'prompt changed' });
+  await runner.tick();
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'failed');
+  assert.match(after.error, /^Not clicked: prompt changed/);
+  assert.ok(!after.mayHaveSubmitted);
+});
+
 test('queued (unapproved) jobs are never submitted', async () => {
   const { store, world, runner } = await setup();
   await store.add(spec('a'));

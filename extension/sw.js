@@ -72,6 +72,7 @@ const driver = {
       url: p.url,
       prompt: p.prompt,
       summary: parseSettingsSummary(p.summaryText),
+      summaryText: p.summaryText,
       input: p.input,
       cost: parseCostLine(p.costText ?? ''),
       generateEnabled: p.generateEnabled,
@@ -80,10 +81,7 @@ const driver = {
       halt: p.halt,
     };
   },
-  async clickGenerate() {
-    const tab = await workTab.get();
-    return driverCall(tab.tabId, 'clickGenerate');
-  },
+  clickGenerate: (tabId, expect) => driverCall(tabId, 'clickGenerate', expect),
 };
 
 // ---- Files --------------------------------------------------------------------------------
