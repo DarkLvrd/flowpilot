@@ -1,0 +1,133 @@
+{
+  "_about": "Plausible Flow alert/snackbar texts, labelled by hand (not by Jev). block = should halt all jobs. None seen live yet; add real ones as they appear.",
+  "notices": [
+    {
+      "text": "We noticed some unusual activity. Please try again later.",
+      "block": true
+    },
+    {
+      "text": "Too many requests. Please slow down and try again in a few minutes.",
+      "block": true
+    },
+    {
+      "text": "You've reached your daily generation limit. Try again tomorrow.",
+      "block": true
+    },
+    {
+      "text": "Your account has been temporarily restricted from generating videos.",
+      "block": true
+    },
+    {
+      "text": "Something went wrong (PUBLIC_ERROR_USER_REQUESTS_THROTTLED)",
+      "block": true
+    },
+    {
+      "text": "You don't have enough credits to generate this. Get more credits to continue.",
+      "block": true
+    },
+    {
+      "text": "Access to Flow has been suspended for this account.",
+      "block": true
+    },
+    {
+      "text": "Rate limit exceeded",
+      "block": true
+    },
+    {
+      "text": "Your video is ready",
+      "block": false
+    },
+    {
+      "text": "Generation failed. Please try again.",
+      "block": false
+    },
+    {
+      "text": "This prompt might violate our policies. Try rephrasing it.",
+      "block": false
+    },
+    {
+      "text": "Copied to clipboard",
+      "block": false
+    },
+    {
+      "text": "Upload failed: file is too large (max 20 MB)",
+      "block": false
+    },
+    {
+      "text": "Project renamed",
+      "block": false
+    },
+    {
+      "text": "Couldn't connect. Check your internet connection.",
+      "block": false
+    },
+    {
+      "text": "Added to ingredients",
+      "block": false
+    },
+    {
+      "text": "Your prompt is too long. Please shorten it.",
+      "block": false
+    },
+    {
+      "text": "Flow was updated. Refresh to get the latest version.",
+      "block": false
+    },
+    {
+      "text": "Our systems have detected unusual traffic from your account.",
+      "block": true
+    },
+    {
+      "text": "You've hit your limit for now. Please wait before creating more.",
+      "block": true
+    },
+    {
+      "text": "Quota exceeded for video generation.",
+      "block": true
+    },
+    {
+      "text": "Please verify it's you to continue.",
+      "block": true
+    },
+    {
+      "text": "Generating is paused for your account. Try again in 24 hours.",
+      "block": true
+    },
+    {
+      "text": "Your request was blocked because of suspicious activity.",
+      "block": true
+    },
+    {
+      "text": "Video generation is taking longer than usual.",
+      "block": false
+    },
+    {
+      "text": "Download started",
+      "block": false
+    },
+    {
+      "text": "Service temporarily unavailable. Please try again.",
+      "block": false
+    },
+    {
+      "text": "Only 12 credits left this month",
+      "block": false
+    },
+    {
+      "text": "Too many images selected. You can add up to 3 ingredients.",
+      "block": false
+    },
+    {
+      "text": "Your free trial ends in 3 days",
+      "block": false
+    },
+    {
+      "text": "Limit reached: prompts can be up to 2,000 characters.",
+      "block": false
+    },
+    {
+      "text": "Something went wrong. Please try again later.",
+      "block": false
+    }
+  ]
+}

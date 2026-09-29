@@ -27,6 +27,7 @@ account**, driven by a person or by any agent.
 | 12 | Projects | Each job names its Flow project; crewmates may share one or use their own. Results are tracked by id, never by grid position. |
 | 13 | Detection | On Flow open, a **self-check** verifies composer, mode controls, settings, Generate, and the page's own data calls, and shows ✅/❌. The generate-response shape is **learned from the first real job**; unknown shapes fail closed with "Flow changed". |
 | 14 | Packaging | Its own repo, MIT. Extension loaded unpacked; helper via `npx flowpilot`; `flowpilot doctor` checks setup. Private GitHub until the owner says otherwise. No Chrome Web Store for now. |
+| 15 | Second-opinion block check | Flow messages the block regex misses go to the **helper**, which asks Jev (TypeSafe, one Noul per message) whether they mean the account is being limited. **Additive only**: a score ≥ 0.4 halts; a low score or failed call never overrides a regex/HTTP block and never clears a halt. The key (`TYPESAFE_API_KEY`) stays in the helper's env; the extension never calls TypeSafe. Threshold from `helper/test/fixtures/flow-notices.json`. |
 
 ## Hard rules (non-negotiable)
 

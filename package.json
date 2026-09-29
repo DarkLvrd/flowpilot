@@ -4,6 +4,6 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "test": "node --test \"extension/test/*.test.mjs\""
+    "test": "node --test \"extension/test/*.test.mjs\" \"helper/test/*.test.mjs\""
   }
 }
