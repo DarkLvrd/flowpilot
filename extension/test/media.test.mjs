@@ -67,3 +67,13 @@ test('finds a result by its verbatim prompt when Flow titled the workflow differ
   const hit = findResult(live, { prompt: 'a red fox trotting through fresh snow at dawn, soft light', since: 1790654667771 - 120_000 });
   assert.equal(hit?.mediaId, '6a2d2214-751e-4e3c-9cc7-98867c205121');
 });
+
+// First live job: a video's detail lists a poster image URL before the video URL.
+test('media detail gives the URL of the kind asked for: the video, not its poster', () => {
+  const inner = parseBatchResponse(fixture('as29s-first-job'), 'as29s').data;
+  const video = parseMediaDetail(inner, 'video');
+  assert.equal(video.kind, 'video');
+  assert.match(video.url, /^https:\/\/flow-content\.google\/video\/6a2d2214-751e-4e3c-9cc7-98867c205121\?/);
+  assert.equal(video.mediaId, '6a2d2214-751e-4e3c-9cc7-98867c205121');
+  assert.equal(parseMediaDetail(inner, 'image').kind, 'image');
+});

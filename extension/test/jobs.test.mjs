@@ -135,3 +135,23 @@ test('concurrent applies do not lose writes', async () => {
   const states = (await store.list()).map((j) => j.state);
   assert.deepEqual(states, ['approved', 'approved', 'approved', 'approved', 'approved']);
 });
+
+test('a failed download can be retried: it goes back to downloading, keeps its media and cost, never re-clicks', async () => {
+  const { store } = await storeWithCap();
+  const { id } = await store.add(spec);
+  await store.apply(id, { type: 'approve' });
+  await store.apply(id, { type: 'start', tabId: 7 });
+  await store.apply(id, { type: 'clicked', at: 1000, cost: 4 });
+  await store.apply(id, { type: 'ready', mediaId: 'm1' });
+  await store.apply(id, { type: 'fail', reason: 'Download rejected: expected mp4 for a video, got jpeg' });
+  const again = await store.apply(id, { type: 'retryDownload' });
+  assert.equal(again.state, 'downloading');
+  assert.equal(again.mediaId, 'm1');
+  assert.equal(again.error, null);
+  assert.equal((await store.session()).spent, 4);
+
+  // Only a job that already has its result can retry a download.
+  const other = await store.add(spec);
+  await store.apply(other.id, { type: 'fail', reason: 'x' });
+  await assert.rejects(store.apply(other.id, { type: 'retryDownload' }), /no result/);
+});

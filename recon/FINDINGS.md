@@ -114,8 +114,9 @@ Text-to-video, 360p 4 s, Ingredients mode, no references. Order after the click:
   record's own prompt (fixture `Zzl0ze-first-job.txt`).
 - Thumbnails/previews are `/asb/<token>` links on `contribution.fife.usercontent.google.com`
   too, not only `lh3.googleusercontent.com`; fixtures redact `/asb/` on any host.
-- `as29s` gives the signed `flow-content.google/video/<mediaId>?Expires=…&Signature=…` URL, as
-  in recon.
+- `as29s` for a video lists **two** signed URLs: the poster `flow-content.google/image/<mediaId>?…`
+  first, then `flow-content.google/video/<mediaId>?Expires=…&Signature=…`. Taking the first one
+  downloaded a JPEG; the magic-byte check rejected it. The reader now asks for the job's kind.
 
 ## Loaded by the page itself (do not touch)
 

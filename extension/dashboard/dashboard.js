@@ -30,6 +30,7 @@ async function render() {
     if (j.state === 'queued') btn('Approve', 'approve');
     if (['queued', 'approved', 'halted'].includes(j.state)) btn('Cancel', 'cancel');
     if (j.state === 'failed' && j.clickedAt == null && !j.mayHaveSubmitted) btn('Re-queue', 'requeue');
+    if (j.state === 'failed' && j.mediaId) btn('Retry download', 'retryDownload');
     return tr;
   });
   $('jobs').replaceChildren(...rows);

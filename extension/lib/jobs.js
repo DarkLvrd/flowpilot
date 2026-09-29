@@ -3,7 +3,7 @@
 //
 //   queued → approved → submitting → submitted → rendering → downloading → done
 //                          │ (clicked is written BEFORE the real click: write-ahead)
-//   any active → failed | halted;  queued/approved → cancelled
+//   any active → failed | halted;  queued/approved → cancelled;  failed (with a result) → downloading
 //
 // The write-ahead click is what makes the machine safe to resume: a job that reached `submitted`
 // is never clicked again, even if the click itself never happened. It can only be matched to a
@@ -22,6 +22,7 @@ const TRANSITIONS = {
   fail: { from: ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading', 'halted'], to: 'failed' },
   cancel: { from: ['queued', 'approved', 'halted'], to: 'cancelled' },
   requeue: { from: ['failed'], to: 'queued' },
+  retryDownload: { from: ['failed'], to: 'downloading' }, // fetches the finished result again; never clicks
 };
 
 // Pure: returns the next job or throws. `session` is read for the cap and halt checks.
@@ -61,6 +62,10 @@ export function transition(job, event, session, now = Date.now()) {
     case 'requeue':
       if (job.clickedAt != null) throw new Error(`Job ${job.id} already clicked once; add a new job instead`);
       if (job.mayHaveSubmitted) throw new Error(`Job ${job.id} may have been submitted already; check Flow and add a new job instead`);
+      next.error = null;
+      break;
+    case 'retryDownload':
+      if (!job.mediaId) throw new Error(`Job ${job.id} has no result in Flow to download`);
       next.error = null;
       break;
   }

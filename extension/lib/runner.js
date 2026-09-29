@@ -62,7 +62,7 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
       }
       const detail = await rpc('mediaDetail', [job.mediaId]);
       if (detail.ok) {
-        parseMediaDetail(detail.data); // throws "Flow changed" if there is no signed URL
+        parseMediaDetail(detail.data, job.settings.kind); // throws "Flow changed" if there is no signed URL
         await store.apply(job.id, { type: 'ready', mediaId: job.mediaId });
       } else if (now() - job.clickedAt > RENDER_TIMEOUT_MS) {
         await store.apply(job.id, { type: 'fail', reason: `Still not ready after 60 min: ${detail.message}` });
@@ -74,7 +74,7 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
     for (const job of jobs.filter((j) => j.state === 'downloading')) {
       const detail = await rpc('mediaDetail', [job.mediaId]);
       if (!detail.ok) continue;
-      const { url } = parseMediaDetail(detail.data);
+      const { url } = parseMediaDetail(detail.data, job.settings.kind);
       const bytes = await files.fetchBytes(url);
       const check = acceptDownload(bytes, job.settings.kind);
       if (!check.ok) {

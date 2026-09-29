@@ -259,6 +259,7 @@ const handlers = {
   approve: async ({ id }) => store.apply(id, { type: 'approve' }),
   cancel: async ({ id }) => store.apply(id, { type: 'cancel' }),
   requeue: async ({ id }) => store.apply(id, { type: 'requeue' }),
+  retryDownload: async ({ id }) => store.apply(id, { type: 'retryDownload' }),
   // Dashboard-only (docs/SPEC.md decision 8): agents and the popup cannot set the cap or un-halt.
   async setCap({ cap }, sender) {
     if (!fromDashboard(sender)) throw new Error('Only the dashboard can set the credit cap');

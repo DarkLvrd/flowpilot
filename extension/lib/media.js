@@ -40,17 +40,18 @@ export function parseProjectMedia(inner) {
   });
 }
 
-// Returns { mediaId, kind, url } where url is the signed flow-content.google URL.
-export function parseMediaDetail(inner) {
+// Returns { mediaId, kind, url } where url is the signed flow-content.google URL. With `kind`
+// ('video' | 'image'), only a URL of that kind counts: a video's detail also lists its poster image.
+export function parseMediaDetail(inner, kind) {
   let hit = null;
   walk(inner, (node) => {
     for (const v of node) {
       const m = typeof v === 'string' && v.match(SIGNED_URL);
-      if (m && !hit) hit = { kind: m[1], urlId: m[2], url: v };
+      if (m && !hit && (!kind || m[1] === kind)) hit = { kind: m[1], urlId: m[2], url: v };
     }
     return !hit;
   });
-  if (!hit) throw new Error('Flow changed: media detail has no signed download URL');
+  if (!hit) throw new Error(`Flow changed: media detail has no signed ${kind ?? 'download'} URL`);
   const mediaId = isId(inner[0]) ? inner[0] : hit.urlId;
   return { mediaId, kind: hit.kind, url: hit.url };
 }
