@@ -29,7 +29,9 @@ class Blocked extends Error {}
 export function createRunner({ store, flow, driver, files, workTab, settings, noticeCheck, now = () => Date.now() }) {
   async function haltOnNotices(notices) {
     if (!noticeCheck || !notices?.length) return;
-    const r = await noticeCheck.check(notices);
+    // A throw (helper unreachable) is no signal, like an error answer; it must not strand the job
+    // in `submitting`, which would block every later submit.
+    const r = await noticeCheck.check(notices).catch(() => ({ halt: false }));
     if (r.halt) throw new Blocked(`Flow said "${r.message}" (read as an account limit)`);
   }
 

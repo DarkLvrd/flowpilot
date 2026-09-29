@@ -257,7 +257,8 @@ test('a Flow message the regex missed but Jev calls a block halts everything bef
 test('Jev only adds halts: a harmless message, a failed Jev call or no helper at all lets the job go ahead', async () => {
   const harmless = fakeNoticeCheck(() => false);
   const failing = { async check() { return { halt: false, error: 'Jev answered HTTP 529' }; } };
-  for (const noticeCheck of [harmless, failing, undefined]) {
+  const unreachable = { async check() { throw new TypeError('fetch failed'); } }; // helper bridge down
+  for (const noticeCheck of [harmless, failing, unreachable, undefined]) {
     const { store, world, runner } = await setup({ page: { notices: ['Project renamed'] } }, { noticeCheck });
     await approved(store, 'a');
     await runner.tick();
