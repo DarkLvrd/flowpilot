@@ -17,6 +17,10 @@ async function render() {
     + (s.lastTick?.waiting ? ` · ⏳ ${s.lastTick.waiting}` : '');
   if (s.session.cap !== shownCap) { shownCap = s.session.cap; $('cap').value = s.session.cap ?? ''; }
   renderChecks($('checks'), s.selfCheck);
+  $('helper').textContent = s.helper?.connected
+    ? '✅ Helper running: agents can use Flow Pilot.'
+    : '⚪ Helper not running (only needed for agents): start it with `npx flowpilot serve`.';
+  $('pair').disabled = !s.helper?.connected;
 
   const rows = s.jobs.slice().reverse().map((j) => {
     const tr = document.createElement('tr');
@@ -42,6 +46,11 @@ $('setCap').onclick = act(async () => {
   await send('setCap', { cap: Number($('cap').value) });
 });
 $('clearHalt').onclick = act(() => send('clearHalt'));
+$('pair').onclick = act(async () => {
+  const { code, expiresAt } = await send('pairCode');
+  const until = new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('pairCode').textContent = `flowpilot pair ${code}   (one use, until ${until})`;
+});
 $('add').onsubmit = act(async (ev) => {
   ev.preventDefault();
   const f = Object.fromEntries(new FormData(ev.target));
