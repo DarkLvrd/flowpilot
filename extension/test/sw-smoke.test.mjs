@@ -9,6 +9,7 @@ const EXT = 'chrome-extension://abc/';
 const data = {};
 const writes = [];
 let listener;
+let onFocus, onActivated; // window focus and tab switch listeners
 const tabs = { 7: { id: 7, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
 let rateLimited = false; // next RPC answers HTTP 429
@@ -27,13 +28,13 @@ globalThis.chrome = {
     onChanged: { addListener() {} },
   },
   alarms: { create() {}, onAlarm: { addListener() {} } },
-  windows: { onFocusChanged: { addListener() {} } },
+  windows: { WINDOW_ID_NONE: -1, onFocusChanged: { addListener: (fn) => { onFocus = fn; } } },
   tabs: {
     async get(id) { if (!tabs[id]) throw new Error('no tab'); return tabs[id]; },
     async update() {},
     async sendMessage(_id, msg) { return msg.cmd === 'selfCheck' ? { ok: true, value: driverChecks } : { ok: false, error: 'not in smoke test' }; },
     onUpdated: { addListener() {} },
-    onActivated: { addListener() {} },
+    onActivated: { addListener: (fn) => { onActivated = fn; } },
   },
   scripting: {
     async executeScript({ args: [rpcid] }) {
@@ -105,4 +106,22 @@ test('a block while adding a job halts the queue instead of queueing blind', asy
   const s = (await send({ cmd: 'status' })).value.session;
   assert.equal(s.halted, true);
   assert.equal((await send({ cmd: 'clearHalt' })).ok, true);
+});
+
+// Focus and tab switches tick only to start a job that waits for Flow in front (LESSONS #16:
+// every tick asks Flow for status, which is paced; switching windows must not add polls).
+test('window focus and tab switches tick only while a job waits for the Flow tab', async () => {
+  const settle = () => new Promise((r) => setTimeout(r, 50));
+  const ticked = async (fire) => { await settle(); writes.length = 0; await fire(); await settle(); return writes.includes('flowpilot.lastTick'); };
+
+  data['flowpilot.lastTick'] = { at: 1, error: null, waiting: null };
+  assert.equal(await ticked(() => onFocus(1)), false);
+  assert.equal(await ticked(() => onActivated({ tabId: 7 })), false);
+
+  data['flowpilot.lastTick'] = { at: 1, error: null, waiting: 'Bring the Flow tab to the front to submit the next job' };
+  assert.equal(await ticked(() => onFocus(-1)), false); // focus left Chrome
+  assert.equal(await ticked(() => onActivated({ tabId: 8 })), false); // some other tab
+  assert.equal(await ticked(() => onFocus(1)), true);
+  data['flowpilot.lastTick'].waiting = 'x';
+  assert.equal(await ticked(() => onActivated({ tabId: 7 })), true);
 });

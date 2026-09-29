@@ -295,10 +295,16 @@ chrome.alarms.create(TICK_ALARM, { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK_ALARM) tick(); });
 
 // A job approved in the dashboard waits for the person to bring Flow to the front: go as soon as they do.
+// Only then: every tick asks Flow for status, which stays on the alarm's pace (LESSONS #16).
+async function tickIfWaiting() {
+  if ((await local.get('flowpilot.lastTick', null))?.waiting) tick();
+}
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  if ((await local.get('flowpilot.workTab', null))?.tabId === tabId) tick();
+  if ((await local.get('flowpilot.workTab', null))?.tabId === tabId) tickIfWaiting();
 });
-chrome.windows.onFocusChanged.addListener(() => tick());
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId !== chrome.windows.WINDOW_ID_NONE) tickIfWaiting();
+});
 
 // Re-check the work tab whenever it (re)loads; other Flow tabs are left alone.
 chrome.tabs.onUpdated.addListener(async (tabId, info) => {
