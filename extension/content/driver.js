@@ -82,9 +82,16 @@
     return $$('[role=dialog], [role=alertdialog], [role=menu]').some((el) => el.offsetParent !== null && !el.querySelector('[role=radio]'));
   }
 
+  const alertTexts = () => $$('[role=alert], [aria-live], snack-bar-container, .mat-mdc-snack-bar-label').map(text);
+
   function blockedText() {
-    const hit = $$('[role=alert], [aria-live], snack-bar-container, .mat-mdc-snack-bar-label').map(text).find((t) => BLOCK_TEXT.test(t));
-    return hit || null;
+    return alertTexts().find((t) => BLOCK_TEXT.test(t)) || null;
+  }
+
+  // Alert texts the block regex didn't match, for the helper's Jev check (it can only add halts).
+  // Short messages only: a live region can hold a whole panel.
+  function noticeTexts() {
+    return [...new Set(alertTexts().filter((t) => t && t.length <= 300 && !BLOCK_TEXT.test(t)))].slice(0, 5);
   }
 
   function waitFor(check, { timeoutMs = 10_000, what = 'page change' } = {}) {
@@ -138,6 +145,7 @@
       generateEnabled: clickable(composerButton(NAMES.generate)),
       overlayOpen: overlayOpen(),
       blocked: blockedText(),
+      notices: noticeTexts(),
     };
   }
 
@@ -256,9 +264,9 @@
       // Flow clears the prompt box once it accepts a generation; a block shows as an alert.
       const outcome = await waitFor(() => (blockedText() ? 'blocked' : promptText() === '' ? 'accepted' : null),
         { timeoutMs: 30_000, what: 'Flow to accept the generation' });
-      return outcome === 'blocked' ? { ok: false, blocked: blockedText() } : { ok: true };
+      return outcome === 'blocked' ? { ok: false, blocked: blockedText() } : { ok: true, notices: noticeTexts() };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return { ok: false, error: e.message, notices: noticeTexts() };
     }
   }
 

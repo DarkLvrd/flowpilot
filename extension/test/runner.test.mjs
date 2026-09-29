@@ -53,11 +53,11 @@ const spec = (name, extra = {}) => ({
   settings: { kind: 'video', input: 'ingredients', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 }, ...extra,
 });
 
-async function setup(worldOpts, { cap = 100, maxInFlight = 2, now = NOW } = {}) {
+async function setup(worldOpts, { cap = 100, maxInFlight = 2, now = NOW, noticeCheck } = {}) {
   const store = createJobStore(memoryArea(), { now: () => now });
   await store.setCap(cap);
   const world = fakeWorld(worldOpts);
-  const runner = createRunner({ store, ...world, settings: { maxInFlight }, now: () => now });
+  const runner = createRunner({ store, ...world, settings: { maxInFlight }, now: () => now, noticeCheck });
   return { store, world, runner };
 }
 
@@ -225,4 +225,56 @@ test('if the composer may have submitted by itself, the job fails for good and e
   assert.equal((await store.get(b.id)).state, 'halted');
   await store.clearHalt();
   await assert.rejects(store.apply(a.id, { type: 'requeue' }), /may have/);
+});
+
+// Stands in for the helper's Jev check: calls a message a block when `isBlock(text)` says so.
+function fakeNoticeCheck(isBlock) {
+  const seen = [];
+  return {
+    seen,
+    async check(texts) {
+      seen.push(texts);
+      const hit = texts.find(isBlock);
+      return hit ? { halt: true, message: hit, p: 0.9 } : { halt: false, p: 0.1 };
+    },
+  };
+}
+
+test('a Flow message the regex missed but Jev calls a block halts everything before the click', async () => {
+  const noticeCheck = fakeNoticeCheck((t) => /daily limit/.test(t));
+  const { store, world, runner } = await setup({ page: { notices: ["You've reached your daily limit"] } }, { noticeCheck });
+  await approved(store, 'a');
+  await approved(store, 'b');
+  const r = await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  assert.equal((await store.session()).halted, true);
+  assert.match((await store.session()).haltReason, /daily limit/);
+  assert.match(r.error, /Halted/);
+});
+
+test('Jev only adds halts: a harmless message, a failed Jev call or no helper at all lets the job go ahead', async () => {
+  const harmless = fakeNoticeCheck(() => false);
+  const failing = { async check() { return { halt: false, error: 'Jev answered HTTP 529' }; } };
+  for (const noticeCheck of [harmless, failing, undefined]) {
+    const { store, world, runner } = await setup({ page: { notices: ['Project renamed'] } }, { noticeCheck });
+    await approved(store, 'a');
+    await runner.tick();
+    assert.ok(world.log.includes('click'));
+    assert.equal((await store.session()).halted, false);
+  }
+  assert.deepEqual(harmless.seen, [['Project renamed']]);
+});
+
+test('a block message that appears after the click halts everything', async () => {
+  const noticeCheck = fakeNoticeCheck((t) => /paused for your account/.test(t));
+  const { store, world, runner } = await setup({}, { noticeCheck });
+  world.driver.clickGenerate = async () => {
+    world.log.push('click');
+    return { ok: false, error: 'Timed out waiting for Flow to accept the generation', notices: ['Generating is paused for your account'] };
+  };
+  const a = await approved(store, 'a');
+  await approved(store, 'b');
+  await runner.tick();
+  assert.equal((await store.session()).halted, true);
+  assert.equal((await store.get(a.id)).state, 'halted');
 });
