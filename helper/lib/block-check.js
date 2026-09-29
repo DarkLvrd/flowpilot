@@ -12,6 +12,7 @@ const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const HALT_AT = 0.4;
 const BUSY = new Set([429, 529]);
 const TRIES = 4;                 // 1 call + 3 retries, waiting 1 s, 2 s, 4 s
+const TIMEOUT_MS = 10_000;       // per call: the job engine waits on this, so a hung call must end
 
 const STATE = { app: "Google Flow (Google's AI video and image generator), web app", source: 'an alert or snackbar shown on the page' };
 
@@ -33,13 +34,14 @@ function question(message) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function createBlockJudge({ fetch = globalThis.fetch, apiKey, threshold = HALT_AT, sleep = wait }) {
+export function createBlockJudge({ fetch = globalThis.fetch, apiKey, threshold = HALT_AT, sleep = wait, timeoutMs = TIMEOUT_MS }) {
   async function post(body) {
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body,
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!BUSY.has(res.status) || attempt === TRIES - 1) return res;
       await sleep(1000 * 2 ** attempt);

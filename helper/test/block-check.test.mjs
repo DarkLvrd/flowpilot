@@ -78,3 +78,11 @@ test('asks once per distinct message and skips the call when there is nothing to
   assert.deepEqual(Object.values(jev.calls[0].body.questions).map((q) => q.instructions.message), ['Project renamed', 'Copied']);
   assert.equal(jev.calls[0].init.headers.Authorization, 'Bearer test-key');
 });
+
+test('a Jev call that hangs gives up after the time limit, without halting', async () => {
+  // Never answers; only the abort signal ends it (the engine waits on this call).
+  const hung = { fetch: (_url, init) => new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal.reason))) };
+  const r = await judge(hung, { timeoutMs: 20 }).check(['Account limited']);
+  assert.equal(r.halt, false);
+  assert.match(r.error, /unreachable/);
+});
