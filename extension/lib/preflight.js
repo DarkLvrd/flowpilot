@@ -20,8 +20,8 @@ export function parseCostLine(text = '') {
   return numberOr(text.match(/Generating will use\s+(\d+)\s+credits?/i)?.[1]);
 }
 
-// job:    { tabId, projectId, prompt, settings, expectedCost (number | null) }
-// page:   { tabId, url, prompt, summary, input, cost, generateEnabled, overlayOpen }
+// job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null) }
+// page:   { tabId, url, prompt, summary, input, model, cost, generateEnabled, overlayOpen }
 // budget: { cap, spent, halted }
 // Returns { ok, problems: [human-readable strings] }.
 export function checkBeforeSpend(job, page, budget) {
@@ -37,6 +37,9 @@ export function checkBeforeSpend(job, page, budget) {
   if (shown.kind !== s.kind) problems.push(`kind is ${shown.kind}, job wants ${s.kind}`);
   if (shown.aspect !== s.aspect) problems.push(`aspect is ${shown.aspect}, job wants ${s.aspect}`);
   if (shown.count !== s.count) problems.push(`count is ${shown.count}, job wants ${s.count}`);
+  // The model decides the price; the catalog's family name is what the model button shows.
+  if (job.modelFamily == null) problems.push('the job has no known model (the catalog could not be read when it was added)');
+  else if (page.model !== job.modelFamily) problems.push(`model is ${page.model}, job wants ${job.modelFamily}`);
   if (s.kind === 'video') {
     if (shown.resolution !== s.resolution) problems.push(`resolution is ${shown.resolution}, job wants ${s.resolution}`);
     if (shown.durationS !== s.durationS) problems.push(`duration is ${shown.durationS}s, job wants ${s.durationS}s`);

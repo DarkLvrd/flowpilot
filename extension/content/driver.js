@@ -12,6 +12,7 @@
     settings: 'Settings trigger',
     ingredients: 'Add ingredients to the prompt box',
     account: 'Account details',
+    model: 'Select model family',
   };
   const BLOCK_TEXT = /unusual activity|UNUSUAL_ACTIVITY|temporarily blocked/i;
 
@@ -227,10 +228,11 @@
     await choose(s.aspect);
     await choose(`x${s.count}`);
     const withPanel = readPage();
+    const model = visibleText(button(NAMES.model)) || null;
     await closeSettings();
     const after = readPage();
-    // Mode radios and cost are only visible with the panel open; the rest is read after closing.
-    return { ...after, input: withPanel.input, costText: withPanel.costText };
+    // Mode radios, model and cost are only visible with the panel open; the rest is read after closing.
+    return { ...after, input: withPanel.input, costText: withPanel.costText, model };
   }
 
   // `expect` is what the pre-spend check approved ({ url, prompt, summaryText }). Everything is

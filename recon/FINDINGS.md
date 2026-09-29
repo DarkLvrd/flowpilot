@@ -47,7 +47,11 @@ learns their response shapes from the first real job (spec decision 13).
   `abra_r2v_*` references (Ingredients), `omni_flash_i2v_*_first_last[_360p]` first+last frame,
   `abra_edit[_360p]`, `omni_upsampler_360p`.
 - Veo 3.1 Fast / Lite / Quality and older Veo 2/3 recipes, upsamplers 1080p / 4K.
-- Images: `GEM_PIX_2` (Nano Banana 2), `nano_banana_pro`, upsample 2K/4K.
+- Images (catalog family → recipe): `🍌 Nano Banana 2` → `NARWHAL`, `🍌 Nano Banana Pro` → `GEM_PIX_2`,
+  `🍌 Nano Banana 2 Lite` → `HARBOR_SEAL`; upsample 2K/4K. All cost 0 today. (Corrected 2026-09-28:
+  this line used to say `GEM_PIX_2` was Nano Banana 2.)
+- The settings panel's model button shows the catalog family name, e.g. `Omni 1.1 Flash`
+  (plus an `arrow_drop_down` icon ligature).
 
 ## Composer DOM (accessible names — stable hooks)
 

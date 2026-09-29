@@ -74,6 +74,7 @@ const driver = {
       summary: parseSettingsSummary(p.summaryText),
       summaryText: p.summaryText,
       input: p.input,
+      model: p.model,
       cost: parseCostLine(p.costText ?? ''),
       generateEnabled: p.generateEnabled,
       overlayOpen: p.overlayOpen || p.agentPanelOpen,
@@ -220,10 +221,12 @@ async function addJob(spec) {
   if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
   const recipe = recipeFor(settings);
   const catalog = await flow.call('catalog', []);
-  const unit = catalog.ok ? creditCost(parseCatalog(catalog.data), recipe) : null;
+  const recipes = catalog.ok ? parseCatalog(catalog.data) : null;
+  const unit = recipes ? creditCost(recipes, recipe) : null;
   const expectedCost = unit == null ? null : unit * settings.count;
+  const modelFamily = recipes?.get(recipe)?.family ?? null;
 
-  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, recipe, expectedCost });
+  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, recipe, expectedCost, modelFamily });
 }
 
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.

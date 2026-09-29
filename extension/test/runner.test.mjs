@@ -35,7 +35,7 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
       return {
         tabId: 7, url: `https://flow.google.com/project/${PID}`, prompt: job.prompt,
         summary: { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
-        input: 'ingredients', cost: 4, generateEnabled: true, overlayOpen: false, ...page,
+        input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false, ...page,
       };
     },
     async clickGenerate() { log.push('click'); return { ok: true }; },
@@ -49,7 +49,7 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
 }
 
 const spec = (name, extra = {}) => ({
-  name, projectId: PID, prompt: `prompt ${name}`, recipe: 'abra_t2v_4s_360p', expectedCost: 4,
+  name, projectId: PID, prompt: `prompt ${name}`, recipe: 'abra_t2v_4s_360p', expectedCost: 4, modelFamily: 'Omni 1.1 Flash',
   settings: { kind: 'video', input: 'ingredients', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 }, ...extra,
 });
 

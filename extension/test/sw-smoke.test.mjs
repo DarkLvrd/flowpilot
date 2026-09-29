@@ -65,6 +65,7 @@ test('adding a job prices it from the catalog', async () => {
   assert.equal(r.ok, true, r.error);
   assert.equal(r.value.recipe, 'abra_t2v_4s_360p');
   assert.equal(r.value.expectedCost, 4);
+  assert.equal(r.value.modelFamily, 'Omni 1.1 Flash');
   assert.equal(r.value.state, 'queued');
 });
 

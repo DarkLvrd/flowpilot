@@ -22,12 +22,12 @@ const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
 const job = {
   tabId: 7, projectId: PID, prompt: 'a red fox runs\nthrough snow',
   settings: { kind: 'video', input: 'ingredients', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
-  expectedCost: 4,
+  expectedCost: 4, modelFamily: 'Omni 1.1 Flash',
 };
 const page = {
   tabId: 7, url: `https://flow.google.com/project/${PID}`, prompt: 'a red fox runs\nthrough snow',
   summary: { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
-  input: 'ingredients', cost: 4, generateEnabled: true, overlayOpen: false,
+  input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false,
 };
 const budget = { cap: 20, spent: 12, halted: false };
 const problems = (p = {}, j = {}, b = {}) => checkBeforeSpend({ ...job, ...j }, { ...page, ...p }, { ...budget, ...b }).problems;
@@ -55,6 +55,12 @@ test('refuses drifted mode or settings', () => {
   assert.match(problems({ summary: { ...page.summary, count: 2 } }).join(), /count/);
 });
 
+test('refuses a different model, or a job whose model is unknown', () => {
+  assert.match(problems({ model: 'Veo 3.1 - Quality' }).join(), /model is Veo 3.1 - Quality, job wants Omni 1.1 Flash/);
+  assert.match(problems({ model: null }).join(), /model/);
+  assert.match(problems({}, { modelFamily: null }).join(), /model/);
+});
+
 test('refuses when the cost line is missing or differs from the expected cost', () => {
   assert.match(problems({ cost: null }).join(), /cost/);
   assert.match(problems({ cost: 7 }).join(), /cost/);
@@ -77,8 +83,8 @@ test('refuses while halted, with Generate disabled, or with an overlay open', ()
 });
 
 test('a free image may have no cost line, but a shown cost must still be 0', () => {
-  const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0 };
-  const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null };
+  const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0, modelFamily: '🍌 Nano Banana 2' };
+  const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null, model: '🍌 Nano Banana 2' };
   assert.deepEqual(problems({ ...imagePage, cost: null }, image), []);
   assert.match(problems({ ...imagePage, cost: 2 }, image).join(), /cost/);
 });
