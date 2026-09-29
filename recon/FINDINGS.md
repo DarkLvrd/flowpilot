@@ -107,7 +107,7 @@ Text-to-video, 360p 4 s, Ingredients mode, no references. Order after the click:
   [<media record>]]`. The balance went 269 → **265** (the 4 credits the cost line promised) and the
   media id (`6a2d2214-…`) is in it from the first response.
 - `jwpduf` (`[null,null,[["<mediaId>"]]]`) returns the media record; its status slot went `[2]`
-  (rendering) → `[3]` (done, plus a duration-like number `492274`) in under a minute.
+  (rendering) → `[3]` (done, plus `492274` = the MP4 size in bytes, matching the saved file) in under a minute.
 - **Flow titles the workflow itself** ("Red fox trotting through snow"); the workflow text is no
   longer the prompt. The verbatim prompt is inside the media record (`[[["<prompt>"]]]` and after
   the timestamp). Matching by the workflow text missed the job; the reader now prefers the
