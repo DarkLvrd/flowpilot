@@ -6,7 +6,8 @@
 //   store    lib/jobs.js store
 //   flow     { call(rpcKey, inner) → parseBatchResponse-style result } bound to the work tab
 //   driver   { prepare(job) → page observation,
-//              clickGenerate(tabId, expect) → { ok, blocked?, error?, notClicked? } }
+//              clickGenerate(tabId, expect) → { ok, blocked?, error?, notClicked? },
+//              inFront(tabId) → whether the tab is visible (Flow only renders in front, LESSONS #23) }
 //              (the driver re-checks `expect` in the page and refuses without clicking if it changed)
 //   files    { fetchBytes(url) → Uint8Array, save(job, bytes, ext) → saved path }
 //   workTab  { get() → { tabId, projectId } | null }
@@ -91,6 +92,9 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
     if (inFlight >= settings.maxInFlight) return;
     const next = jobs.find((j) => j.state === 'approved' && j.projectId === tab.projectId);
     if (!next) return;
+    // Approving happens in the dashboard, so the Flow tab is usually behind it at that moment.
+    // Wait (job stays approved) until the person brings Flow to the front; never switch tabs for them.
+    if (!(await driver.inFront(tab.tabId))) return { waiting: 'Bring the Flow tab to the front to submit the next job' };
 
     const job = await store.apply(next.id, { type: 'start', tabId: tab.tabId });
     let page;
@@ -129,7 +133,8 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
   }
 
   return {
-    // Returns { error } when a pass stopped early; the store holds everything else.
+    // Returns { error } when a pass stopped early, { waiting } when a job waits for the person;
+    // the store holds everything else.
     async tick() {
       if ((await store.session()).halted) return {};
       const tab = await workTab.get();
@@ -137,8 +142,7 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
       try {
         await track(tab, await store.list());
         await download(await store.list());
-        await submitNext(tab, await store.list());
-        return {};
+        return (await submitNext(tab, await store.list())) ?? {};
       } catch (e) {
         if (e instanceof Blocked) {
           await store.halt(e.message);

@@ -270,7 +270,9 @@
     }
   }
 
-  const api = { selfCheck, readPage, prepare, clickGenerate };
+  const inFront = () => document.visibilityState === 'visible';
+
+  const api = { selfCheck, readPage, prepare, clickGenerate, inFront };
   globalThis.__flowPilotDriver = api; // isolated world only; the page cannot see it
 
   if (globalThis.chrome?.runtime?.onMessage) {

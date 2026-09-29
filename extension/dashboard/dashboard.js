@@ -13,7 +13,8 @@ async function render() {
   $('haltReason').textContent = `⛔ All jobs halted: ${s.session.haltReason}`;
   $('summary').textContent = `${s.workTab ? `Work tab: project ${s.workTab.projectId}` : 'No work tab: open a Flow project and click "Use this tab" in the popup.'}`
     + ` · Credits this session: ${s.session.spent} / ${s.session.cap ?? 'no cap'}`
-    + (s.selfCheck?.balance != null ? ` · Balance: ${s.selfCheck.balance}` : '');
+    + (s.selfCheck?.balance != null ? ` · Balance: ${s.selfCheck.balance}` : '')
+    + (s.lastTick?.waiting ? ` · ⏳ ${s.lastTick.waiting}` : '');
   if (s.session.cap !== shownCap) { shownCap = s.session.cap; $('cap').value = s.session.cap ?? ''; }
   renderChecks($('checks'), s.selfCheck);
 

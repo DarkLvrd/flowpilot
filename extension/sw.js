@@ -84,6 +84,7 @@ const driver = {
     };
   },
   clickGenerate: (tabId, expect) => driverCall(tabId, 'clickGenerate', expect),
+  inFront: (tabId) => driverCall(tabId, 'inFront'),
 };
 
 // ---- Files --------------------------------------------------------------------------------
@@ -134,7 +135,7 @@ async function tick() {
     const settings = { ...DEFAULT_SETTINGS, ...(await local.get('flowpilot.settings', {})) };
     const runner = createRunner({ store, flow, driver, files, workTab, settings });
     const result = await runner.tick();
-    await local.set('flowpilot.lastTick', { at: Date.now(), error: result.error ?? null });
+    await local.set('flowpilot.lastTick', { at: Date.now(), error: result.error ?? null, waiting: result.waiting ?? null });
     await guardWorkTab();
   })().finally(() => { ticking = null; });
   return ticking;
@@ -291,6 +292,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 store.recover();
 chrome.alarms.create(TICK_ALARM, { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK_ALARM) tick(); });
+
+// A job approved in the dashboard waits for the person to bring Flow to the front: go as soon as they do.
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  if ((await local.get('flowpilot.workTab', null))?.tabId === tabId) tick();
+});
+chrome.windows.onFocusChanged.addListener(() => tick());
 
 // Re-check the work tab whenever it (re)loads; other Flow tabs are left alone.
 chrome.tabs.onUpdated.addListener(async (tabId, info) => {

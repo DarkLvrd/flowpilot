@@ -27,11 +27,13 @@ globalThis.chrome = {
     onChanged: { addListener() {} },
   },
   alarms: { create() {}, onAlarm: { addListener() {} } },
+  windows: { onFocusChanged: { addListener() {} } },
   tabs: {
     async get(id) { if (!tabs[id]) throw new Error('no tab'); return tabs[id]; },
     async update() {},
     async sendMessage(_id, msg) { return msg.cmd === 'selfCheck' ? { ok: true, value: driverChecks } : { ok: false, error: 'not in smoke test' }; },
     onUpdated: { addListener() {} },
+    onActivated: { addListener() {} },
   },
   scripting: {
     async executeScript({ args: [rpcid] }) {

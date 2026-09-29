@@ -39,13 +39,15 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
       };
     },
     async clickGenerate() { log.push('click'); return { ok: true }; },
+    async inFront() { return world.front; },
   };
   const files = {
     async fetchBytes(url) { log.push(`fetch:${url}`); return bytes; },
     async save(job, data, type) { log.push(`save:${job.name}.${type}`); return `FlowPilot/${job.projectId}/${job.name}.${type}`; },
   };
   const workTab = { async get() { return { tabId: 7, projectId: PID }; } };
-  return { log, server, flow, driver, files, workTab };
+  const world = { log, server, flow, driver, files, workTab, front: true };
+  return world;
 }
 
 const spec = (name, extra = {}) => ({
@@ -277,4 +279,19 @@ test('a block message that appears after the click halts everything', async () =
   await runner.tick();
   assert.equal((await store.session()).halted, true);
   assert.equal((await store.get(a.id)).state, 'halted');
+});
+
+test('an approved job waits, unstarted, while the Flow tab is behind another tab, then goes once it is in front', async () => {
+  const { store, world, runner } = await setup();
+  world.front = false;
+  const a = await approved(store, 'a');
+  const r = await runner.tick();
+  assert.equal((await store.get(a.id)).state, 'approved');
+  assert.match(r.waiting, /front/);
+  assert.ok(!world.log.some((l) => l.startsWith('prepare')));
+
+  world.front = true;
+  await runner.tick();
+  assert.equal((await store.get(a.id)).state, 'submitted');
+  assert.ok(world.log.includes('click'));
 });
