@@ -15,6 +15,9 @@ export const BATCHEXECUTE_PATH = '/_/AiSandboxAngularFrontend/data/batchexecute'
 
 // Any of these anywhere in a response halts every job (docs/SPEC.md hard rules).
 const BLOCK_MARKERS = /UNUSUAL_ACTIVITY|PUBLIC_ERROR_ABUSE|RECAPTCHA_(?:FAILED|INVALID)/;
+// "Or similar block": rate limited or refused over HTTP, or RESOURCE_EXHAUSTED inside the response.
+const BLOCK_STATUSES = new Set([403, 429]);
+const RESOURCE_EXHAUSTED = 8;
 
 export function buildFReq(rpcid, inner) {
   return JSON.stringify([[[rpcid, JSON.stringify(inner), null, 'generic']]]);
@@ -22,7 +25,9 @@ export function buildFReq(rpcid, inner) {
 
 // Returns { ok: true, data } or { ok: false, kind: 'blocked' | 'rpc-error' | 'flow-changed', message }.
 // Chunk length prefixes are not trusted; every line that parses as a JSON array is an entry list.
-export function parseBatchResponse(text, rpcid) {
+// `status` is the HTTP status when known.
+export function parseBatchResponse(text, rpcid, status) {
+  if (BLOCK_STATUSES.has(status)) return fail('blocked', `${rpcid}: Flow answered HTTP ${status}`);
   if (typeof text !== 'string' || !text.startsWith(")]}'")) {
     return fail('flow-changed', `${rpcid}: response is not batchexecute`);
   }
@@ -44,6 +49,7 @@ export function parseBatchResponse(text, rpcid) {
 
   if (typeof entry[2] !== 'string') {
     const code = Array.isArray(entry[5]) ? entry[5][0] : 'unknown';
+    if (code === RESOURCE_EXHAUSTED) return fail('blocked', `${rpcid}: Flow returned RESOURCE_EXHAUSTED`);
     return fail('rpc-error', `${rpcid}: Flow returned error code ${code}`);
   }
   try {

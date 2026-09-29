@@ -11,6 +11,7 @@ const writes = [];
 let listener;
 const tabs = { 7: { id: 7, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
+let rateLimited = false; // next RPC answers HTTP 429
 
 globalThis.chrome = {
   runtime: {
@@ -34,6 +35,7 @@ globalThis.chrome = {
   },
   scripting: {
     async executeScript({ args: [rpcid] }) {
+      if (rateLimited) return [{ result: { status: 429, text: '' } }];
       const known = { nzlxg: 'nzlxg', HTrJv: 'HTrJv', yBhWQ: 'yBhWQ', Zzl0ze: 'Zzl0ze' };
       return [{ result: known[rpcid] ? { status: 200, text: fixture(known[rpcid]) } : { status: 400, text: '' } }];
     },
@@ -90,4 +92,15 @@ test('reading status writes nothing to storage', async () => {
   await send({ cmd: 'status' });
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(writes, []);
+});
+
+test('a block while adding a job halts the queue instead of queueing blind', async () => {
+  rateLimited = true;
+  const r = await send({ cmd: 'addJob', spec: { name: 'x', prompt: 'x', kind: 'video', input: 'text', resolution: '360p', durationS: 4 } });
+  rateLimited = false;
+  assert.equal(r.ok, false);
+  assert.match(r.error, /429|blocked/i);
+  const s = (await send({ cmd: 'status' })).value.session;
+  assert.equal(s.halted, true);
+  assert.equal((await send({ cmd: 'clearHalt' })).ok, true);
 });

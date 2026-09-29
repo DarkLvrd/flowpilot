@@ -52,3 +52,17 @@ test('any UNUSUAL_ACTIVITY anywhere means blocked, even with a payload', () => {
   assert.equal(r.ok, false);
   assert.equal(r.kind, 'blocked');
 });
+
+test('rate limits and refusals count as blocks, whatever the body says', () => {
+  const ok = fixture('nzlxg');
+  assert.equal(parseBatchResponse(ok, 'nzlxg', 429).kind, 'blocked');
+  assert.equal(parseBatchResponse('', 'nzlxg', 403).kind, 'blocked');
+  assert.equal(parseBatchResponse(ok, 'nzlxg', 200).ok, true);
+  assert.equal(parseBatchResponse(ok, 'nzlxg').ok, true); // status unknown: judge the body only
+});
+
+test('a RESOURCE_EXHAUSTED (8) error entry is a block, other codes are plain errors', () => {
+  const entry = (code) => `)]}'\n\n[["wrb.fr","nzlxg",null,null,null,[${code}],"generic"]]`;
+  assert.equal(parseBatchResponse(entry(8), 'nzlxg').kind, 'blocked');
+  assert.equal(parseBatchResponse(entry(3), 'nzlxg').kind, 'rpc-error');
+});

@@ -42,7 +42,7 @@ async function callInTab(tabId, key, inner) {
     target: { tabId }, world: 'MAIN', func: pageRpc, args: [rpcid, buildFReq(rpcid, inner)],
   });
   if (result.error) return { ok: false, kind: 'rpc-error', message: result.error };
-  return parseBatchResponse(result.text, rpcid);
+  return parseBatchResponse(result.text, rpcid, result.status);
 }
 
 const flow = {
@@ -221,6 +221,10 @@ async function addJob(spec) {
   if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
   const recipe = recipeFor(settings);
   const catalog = await flow.call('catalog', []);
+  if (catalog.kind === 'blocked') {
+    await store.halt(catalog.message);
+    throw new Error(`Halted, job not added: ${catalog.message}`);
+  }
   const recipes = catalog.ok ? parseCatalog(catalog.data) : null;
   const unit = recipes ? creditCost(recipes, recipe) : null;
   const expectedCost = unit == null ? null : unit * settings.count;
