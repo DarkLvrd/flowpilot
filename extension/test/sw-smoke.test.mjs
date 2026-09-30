@@ -84,10 +84,31 @@ test('adding a job prices it from the catalog', async () => {
   assert.equal(r.value.state, 'queued');
 });
 
-test('jobs with references are refused until the driver can attach them', async () => {
-  const r = await send({ cmd: 'addJob', spec: { prompt: 'x', input: 'ingredients', refs: ['m1'] } });
+test('an Ingredients job (reference media id) is queued as a reference-to-video generation', async () => {
+  const REF = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
+  const r = await send({ cmd: 'addJob', spec: { name: 'ref', prompt: 'x', input: 'ingredients', refs: [REF], resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.recipe, 'abra_r2v_4s_360p');
+  assert.equal(r.value.expectedCost, 4);
+  assert.deepEqual(r.value.referencePlan.ingredients, [{ kind: 'mediaId', mediaId: REF }]);
+  assert.equal(r.value.settings.input, 'ingredients');
+});
+
+test('a Frames job (first + last frame) is queued as a first-last generation', async () => {
+  const A = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
+  const B = '63078305-0723-426c-ab9f-36657a5e0801';
+  const r = await send({ cmd: 'addJob', spec: { name: 'frames', prompt: 'x', input: 'frames', firstFrame: A, lastFrame: B, resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.recipe, 'omni_flash_i2v_4s_first_last_360p');
+  assert.equal(r.value.settings.input, 'frames');
+  assert.deepEqual(r.value.referencePlan.firstFrame, { kind: 'mediaId', mediaId: A });
+  assert.deepEqual(r.value.referencePlan.lastFrame, { kind: 'mediaId', mediaId: B });
+});
+
+test('a job with a malformed reference is refused with a clear error', async () => {
+  const r = await send({ cmd: 'addJob', spec: { prompt: 'x', input: 'ingredients', refs: ['not-an-id-or-path'] } });
   assert.equal(r.ok, false);
-  assert.match(r.error, /not supported yet/);
+  assert.match(r.error, /media id or an absolute path/);
 });
 
 test('only the dashboard can set the cap', async () => {

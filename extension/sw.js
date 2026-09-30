@@ -6,6 +6,7 @@ import { pageRpc } from './lib/page-rpc.js';
 import { createJobStore } from './lib/jobs.js';
 import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost, recipeFor } from './lib/catalog.js';
+import { validateReferences } from './lib/refs.js';
 import { parseProjectMedia } from './lib/media.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
 import { createBridge, HELPER_PORT } from './lib/bridge.js';
@@ -212,22 +213,32 @@ async function addJob(spec) {
   const projectId = spec.projectId ?? tab.projectId;
   if (!/^[0-9a-f-]{36}$/.test(projectId)) throw new Error('Bad project id');
 
+  const kind = spec.kind ?? 'video';
+  const hasRefFields = (spec.refs?.length ?? 0) > 0 || spec.firstFrame != null || spec.lastFrame != null;
+  if (kind !== 'video' && hasRefFields) {
+    throw new Error('References (Ingredients and Frames) are for video jobs; image reference support is not wired yet');
+  }
+  // Infer the input from the fields when it isn't named: a frame field means Frames, references
+  // mean Ingredients, otherwise plain text. validateReferences throws a clear error on a bad ref.
+  const rawInput = spec.input ?? (spec.firstFrame != null || spec.lastFrame != null ? 'frames' : (spec.refs?.length ? 'ingredients' : 'text'));
+  const referencePlan = kind === 'video'
+    ? validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame })
+    : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null };
+
   const settings = {
-    kind: spec.kind ?? 'video',
-    input: spec.input ?? 'text',
+    kind,
+    // Flow has no "text" radio: text and Ingredients both use the Ingredients tab (an empty
+    // ingredients list is plain text-to-video); only Frames uses the Frames tab.
+    input: referencePlan.input === 'frames' ? 'frames' : 'ingredients',
     resolution: spec.resolution ?? '720p',
     durationS: Number(spec.durationS ?? 4),
     aspect: spec.aspect ?? '16:9',
     count: Number(spec.count ?? 1),
     model: spec.model,
     refs: spec.refs ?? [],
-    firstFrame: spec.firstFrame,
-    lastFrame: spec.lastFrame,
+    firstFrame: spec.firstFrame ?? null,
+    lastFrame: spec.lastFrame ?? null,
   };
-  if (settings.input === 'text') settings.input = 'ingredients'; // text-only runs from the Ingredients tab
-  if (settings.refs.length || settings.firstFrame || settings.lastFrame) {
-    throw new Error('Reference images and frames are not supported yet (the driver cannot attach them)');
-  }
   const outputPath = spec.outputPath == null || spec.outputPath === '' ? undefined : String(spec.outputPath);
   if (outputPath) {
     if (!/^(\/|[A-Za-z]:[\\/])/.test(outputPath)) throw new Error(`Output path must be absolute: ${outputPath}`);
@@ -247,7 +258,10 @@ async function addJob(spec) {
   const expectedCost = unit == null ? null : unit * settings.count;
   const modelFamily = recipes?.get(recipe)?.family ?? null;
 
-  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, recipe, expectedCost, modelFamily, outputPath });
+  // referencePlan holds the classified references (media ids and/or absolute paths); `references`
+  // is filled with the resolved media ids at submit, once any path has been uploaded, and is what
+  // the pre-spend check verifies against what the composer actually has attached.
+  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, referencePlan, references: null, recipe, expectedCost, modelFamily, outputPath });
 }
 
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.
