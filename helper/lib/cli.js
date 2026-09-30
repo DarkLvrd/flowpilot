@@ -2,12 +2,14 @@
 
 import { parseArgs } from 'node:util';
 import { createKeyring } from './keys.js';
+import { createPin } from './pin.js';
 import { createHelper } from './server.js';
 import { createClient, paths, readKey, saveKey } from './client.js';
 
 const USAGE = `Usage: flowpilot <command>
 
-  serve                     Run the helper (agents reach Flow Pilot through it)
+  serve [--forget-extension]  Run the helper. --forget-extension clears the pinned extension so the
+                            next one to connect is pinned afresh (docs/SPEC.md decision 9)
   pair <code> [--name N]    Pair this machine with the code from the dashboard's "Pair an agent"
   status                    Credits, work tab and the queue
   job <id>                  One job
@@ -23,6 +25,7 @@ const OPTIONS = {
   name: { type: 'string' }, prompt: { type: 'string' }, kind: { type: 'string' }, resolution: { type: 'string' },
   duration: { type: 'string' }, aspect: { type: 'string' }, count: { type: 'string' }, project: { type: 'string' },
   out: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+  'forget-extension': { type: 'boolean' },
 };
 
 class Usage extends Error {}
@@ -46,7 +49,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
 
   try {
     switch (cmd) {
-      case 'serve': return await serve(p, out);
+      case 'serve': return await serve(p, out, { forgetExtension: o['forget-extension'] });
       case 'mcp': { const { runMcp } = await import('./mcp.js'); await runMcp({ client: client() }); return 0; }
       case 'pair': {
         if (!rest[0]) throw new Usage('pair needs the code from the dashboard');
@@ -79,9 +82,11 @@ export async function main(argv, { env = process.env, out = console.log, err = c
   }
 }
 
-async function serve(p, out) {
+async function serve(p, out, { forgetExtension = false } = {}) {
   const keyring = createKeyring({ file: p.agents });
-  const helper = createHelper({ keyring, log: (m) => out(`${new Date().toLocaleTimeString()} ${m}`) });
+  const pin = createPin({ file: p.extension });
+  if (forgetExtension) { pin.forget(); out('Forgot the pinned extension: the next one to connect will be pinned.'); }
+  const helper = createHelper({ keyring, pin, log: (m) => out(`${new Date().toLocaleTimeString()} ${m}`) });
   try {
     await helper.listen(p.port);
   } catch (e) {
@@ -101,6 +106,8 @@ async function doctor(p, client, out) {
   const health = await client.health().catch(() => null);
   add(!!health, `Helper running on 127.0.0.1:${p.port}`, 'run `npx flowpilot serve`');
   add(!!health?.extension, 'Extension connected', 'open Chrome with Flow Pilot loaded; it connects within 30 s');
+  const pinned = createPin({ file: p.extension }).get();
+  if (pinned) add(true, `Extension pinned (${pinned})`);
   const key = readKey(p);
   let status = null;
   if (key && health?.extension) status = await client.status().catch(() => null);

@@ -1,19 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync, readFileSync } from 'node:fs';
+import { mkdtempSync, statSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import WebSocket from 'ws';
 import { createKeyring } from '../lib/keys.js';
+import { createPin } from '../lib/pin.js';
 import { createHelper } from '../lib/server.js';
 import { main } from '../lib/cli.js';
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
 async function world({ extension = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'fp-cli-'));
   const keyring = createKeyring({ file: join(home, 'agents.json') });
-  const helper = createHelper({ keyring });
+  const pin = createPin({ file: join(home, 'extension.json') });
+  const helper = createHelper({ keyring, pin });
   const port = await helper.listen(0);
   const calls = [];
   let ws;
@@ -93,5 +96,20 @@ test('doctor reports each part of the setup', async () => {
   r = await w.run('doctor');
   assert.equal(r.code, 0, r.text);
   assert.match(r.text, /✅ .*Work tab/);
+  assert.match(r.text, new RegExp(`Extension pinned.*${EXT_ID}`)); // reports the pinned id
   await w.close();
+});
+
+test('serve --forget-extension clears the pinned extension and reports it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'fp-cli-'));
+  const extFile = join(home, 'extension.json');
+  writeFileSync(extFile, JSON.stringify({ id: EXT_ID }));
+  const env = { FLOWPILOT_HOME: home, FLOWPILOT_PORT: '0' };
+  const out = [];
+  const done = main(['serve', '--forget-extension'], { env, out: (s) => out.push(s), err: (s) => out.push(s) });
+  await new Promise((r) => setTimeout(r, 50)); // serve forgets the pin, then starts listening
+  assert.ok(!existsSync(extFile));
+  process.emit('SIGINT'); // stop the helper we started
+  assert.equal(await done, 0);
+  assert.match(out.join('\n'), /forgot the pinned extension/i);
 });

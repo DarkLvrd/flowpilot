@@ -8,7 +8,7 @@ import { HELPER_PORT } from '../../extension/lib/bridge.js';
 // Where the helper keeps its files: agents.json (key hashes) and key (this machine's CLI key).
 export function paths(env = process.env) {
   const home = env.FLOWPILOT_HOME || join(homedir(), '.flowpilot');
-  return { home, agents: join(home, 'agents.json'), key: join(home, 'key'), port: Number(env.FLOWPILOT_PORT || HELPER_PORT) };
+  return { home, agents: join(home, 'agents.json'), key: join(home, 'key'), extension: join(home, 'extension.json'), port: Number(env.FLOWPILOT_PORT || HELPER_PORT) };
 }
 
 export function readKey(p) {
