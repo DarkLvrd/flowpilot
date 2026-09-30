@@ -5,15 +5,19 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import WebSocket from 'ws';
 import { createKeyring } from '../lib/keys.js';
+import { createPin } from '../lib/pin.js';
 import { createHelper } from '../lib/server.js';
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+const EXT2 = 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba';
 const MP4 = Buffer.from([0, 0, 0, 0x20, ...Buffer.from('ftypisom'), ...Array(52).fill(0)]);
 const tmp = () => mkdtempSync(join(tmpdir(), 'flowpilot-helper-'));
 
 async function start() {
-  const keyring = createKeyring({ file: join(tmp(), 'agents.json') });
-  const helper = createHelper({ keyring });
+  const home = tmp();
+  const keyring = createKeyring({ file: join(home, 'agents.json') });
+  const pin = createPin({ file: join(home, 'extension.json') });
+  const helper = createHelper({ keyring, pin });
   const port = await helper.listen(0);
   const base = `http://127.0.0.1:${port}`;
   const http = async (method, path, { key, body, headers = {} } = {}) => {
@@ -24,7 +28,7 @@ async function start() {
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
-  return { helper, keyring, port, base, http };
+  return { helper, keyring, pin, port, base, http };
 }
 
 // A stand-in for the extension's service worker: answers the helper's commands with `handle`.
@@ -132,6 +136,18 @@ test('web pages cannot reach it: a browser Origin or a foreign Host header is re
   assert.equal(rebound, 403);
   await assert.rejects(fakeExtension(t.port, async () => ({}), { origin: 'https://evil.example' }), /403/);
   await t.helper.close();
+});
+
+test('the bridge pins the first extension id and refuses any other with 403, never pinning it', async () => {
+  const t = await start();
+  const ext = await fakeExtension(t.port, async () => ({}), { origin: EXT });
+  assert.equal(t.pin.get(), 'abcdefghijklmnopabcdefghijklmnop');
+  // A second, different installed extension cannot pose as Flow Pilot.
+  await assert.rejects(fakeExtension(t.port, async () => ({}), { origin: EXT2 }), /403/);
+  assert.equal(t.pin.get(), 'abcdefghijklmnopabcdefghijklmnop'); // the impostor is never pinned
+  // The pinned extension still connects.
+  const again = await fakeExtension(t.port, async () => ({}), { origin: EXT });
+  again.ws.close(); ext.ws.close(); await t.helper.close();
 });
 
 test('the extension saves a finished file to an absolute path: media only, bytes checked, never overwriting', async () => {

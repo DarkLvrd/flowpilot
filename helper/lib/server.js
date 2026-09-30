@@ -24,7 +24,7 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-export function createHelper({ keyring, host = '127.0.0.1', log = () => {} }) {
+export function createHelper({ keyring, pin = { check: () => true }, host = '127.0.0.1', log = () => {} }) {
   let port = null;
   let extension = null; // the one connected extension socket
   let nextId = 0;
@@ -140,9 +140,11 @@ export function createHelper({ keyring, host = '127.0.0.1', log = () => {} }) {
   });
 
   server.on('upgrade', (req, socket, head) => {
+    const id = /^chrome-extension:\/\/([a-p]{32})$/.exec(req.headers.origin ?? '');
     const ok = new URL(req.url, 'http://127.0.0.1').pathname === '/bridge'
       && localHost(req.headers.host)
-      && /^chrome-extension:\/\/[a-p]{32}$/.test(req.headers.origin ?? '');
+      && id
+      && pin.check(id[1]); // trust-on-first-use: only the pinned extension may open the bridge
     if (!ok) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
