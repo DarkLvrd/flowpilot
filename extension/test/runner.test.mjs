@@ -17,7 +17,7 @@ function memoryArea() {
 }
 
 // A fake Flow tab: records calls, serves project media and media detail from `server`.
-function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = false } = {}) {
+function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = false, attachedOverride = null } = {}) {
   const log = [];
   const server = { media, detail };
   const flow = {
@@ -32,21 +32,40 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
   const driver = {
     async prepare(job) {
       log.push(`prepare:${job.name}`);
+      // A real driver attaches job.references in the composer; the fake reports them back as
+      // attached, so the pre-spend reference check sees a faithful composer unless overridden.
+      const attached = attachedOverride ?? (job.references
+        ? { ingredients: job.references.ingredients ?? [], firstFrame: job.references.firstFrame ?? null, lastFrame: job.references.lastFrame ?? null }
+        : { ingredients: [], firstFrame: null, lastFrame: null });
       return {
         tabId: 7, url: `https://flow.google.com/project/${PID}`, prompt: job.prompt,
         summary: { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
-        input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false, ...page,
+        input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false, attached, ...page,
       };
     },
     async clickGenerate() { log.push('click'); return { ok: true }; },
     async inFront() { return world.front; },
   };
+  // Resolves a classified reference to a media id: an id passes through; a path 'uploads' to a
+  // deterministic fake id. `resolveError` (set on the world) makes resolution throw/halt.
+  const resolve = async (job) => {
+    log.push(`resolve:${job.name}`);
+    if (world.resolveError) throw world.resolveError;
+    const id = (r) => (r.kind === 'mediaId' ? r.mediaId : `uploaded-${r.path.replace(/\W+/g, '-')}`);
+    const plan = job.referencePlan;
+    return {
+      ingredients: (plan.ingredients ?? []).map(id),
+      firstFrame: plan.firstFrame ? id(plan.firstFrame) : null,
+      lastFrame: plan.lastFrame ? id(plan.lastFrame) : null,
+    };
+  };
+  const refs = { resolve };
   const files = {
     async fetchBytes(url) { log.push(`fetch:${url}`); return bytes; },
     async save(job, data, type) { log.push(`save:${job.name}.${type}`); return `FlowPilot/${job.projectId}/${job.name}.${type}`; },
   };
   const workTab = { async get() { return { tabId: 7, projectId: PID }; } };
-  const world = { log, server, flow, driver, files, workTab, front: true };
+  const world = { log, server, flow, driver, files, workTab, refs, front: true, resolveError: null };
   return world;
 }
 
@@ -300,4 +319,80 @@ test('a result that cannot be saved fails its job (Retry download can try again)
   assert.equal(after.state, 'failed');
   assert.match(after.error, /Could not save.*permission denied/);
   assert.equal((await store.get(b.id)).state, 'submitted');
+});
+
+// ---- References (Ingredients and Frames) ------------------------------------------------------
+
+const REF_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const REF_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+const ingSpec = (name, ingredients) => spec(name, {
+  recipe: 'abra_r2v_4s_360p',
+  settings: { kind: 'video', input: 'ingredients', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
+  referencePlan: { input: 'ingredients', ingredients, firstFrame: null, lastFrame: null },
+});
+
+test('an Ingredients job resolves its references, attaches them, passes the check and clicks', async () => {
+  const { store, world, runner } = await setup();
+  const job = await store.add(ingSpec('a', [{ kind: 'mediaId', mediaId: REF_A }, { kind: 'path', path: '/pics/face.png' }]));
+  await store.apply(job.id, { type: 'approve' });
+  await runner.tick();
+  assert.ok(world.log.includes('resolve:a'));
+  assert.ok(world.log.indexOf('resolve:a') < world.log.indexOf('prepare:a')); // resolve before prepare
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'submitted');
+  assert.deepEqual(after.references, { ingredients: [REF_A, 'uploaded--pics-face-png'], firstFrame: null, lastFrame: null });
+});
+
+test('an Ingredients job whose composer attached the wrong references fails and never clicks', async () => {
+  const { store, world, runner } = await setup({ attachedOverride: { ingredients: [REF_A], firstFrame: null, lastFrame: null } });
+  const job = await store.add(ingSpec('a', [{ kind: 'mediaId', mediaId: REF_A }, { kind: 'mediaId', mediaId: REF_B }]));
+  await store.apply(job.id, { type: 'approve' });
+  await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'failed');
+  assert.match(after.error, /reference/i);
+  assert.equal((await store.session()).spent, 0);
+});
+
+test('a Frames job resolves the first and last frame and attaches both', async () => {
+  const { store, world, runner } = await setup();
+  const job = await store.add(spec('a', {
+    recipe: 'omni_flash_i2v_4s_first_last_360p',
+    settings: { kind: 'video', input: 'frames', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
+    referencePlan: { input: 'frames', ingredients: [], firstFrame: { kind: 'path', path: '/a/first.png' }, lastFrame: { kind: 'mediaId', mediaId: REF_B } },
+  }));
+  await store.apply(job.id, { type: 'approve' });
+  // The page must show the Frames input for the mode check to pass.
+  world.driver.prepare = (function (orig) { return async (j) => ({ ...(await orig(j)), input: 'frames' }); })(world.driver.prepare);
+  await runner.tick();
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.deepEqual(after.references, { ingredients: [], firstFrame: 'uploaded--a-first-png', lastFrame: REF_B });
+});
+
+test('a reference that will not resolve (upload failed) fails the job and never clicks', async () => {
+  const { store, world, runner } = await setup();
+  world.resolveError = new Error('the upload never appeared in the project within 3 min');
+  const job = await store.add(ingSpec('a', [{ kind: 'path', path: '/pics/face.png' }]));
+  await store.apply(job.id, { type: 'approve' });
+  await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'failed');
+  assert.match(after.error, /Could not attach references.*upload never appeared/);
+  assert.equal((await store.session()).spent, 0);
+});
+
+test('a block while resolving references halts everything', async () => {
+  const { store, world, runner } = await setup();
+  world.resolveError = Object.assign(new Error('blocked'), { blocked: 'Flow reported UNUSUAL_ACTIVITY' });
+  const job = await store.add(ingSpec('a', [{ kind: 'path', path: '/pics/face.png' }]));
+  await store.apply(job.id, { type: 'approve' });
+  const r = await runner.tick();
+  assert.match(r.error, /Halted/);
+  assert.equal((await store.session()).halted, true);
+  assert.ok(!world.log.includes('click'));
 });

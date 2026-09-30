@@ -134,6 +134,16 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
       });
     },
 
+    // Records the media ids a submitting job's references resolved to (after any local paths were
+    // uploaded). Metadata only: the job stays in its current state; the pre-spend check reads it.
+    setReferences(id, references) {
+      return update((state) => {
+        const i = find(state, id);
+        state.jobs[i] = { ...state.jobs[i], references, updatedAt: now() };
+        return state.jobs[i];
+      });
+    },
+
     // Only the dashboard may call this (docs/SPEC.md decision 8); the caller enforces who.
     setCap(cap) {
       return update((state) => { state.session.cap = cap; return state.session; });

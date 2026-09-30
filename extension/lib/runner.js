@@ -11,6 +11,10 @@
 //              (the driver re-checks `expect` in the page and refuses without clicking if it changed)
 //   files    { fetchBytes(url) → Uint8Array, save(job, bytes, ext) → saved path }
 //   workTab  { get() → { tabId, projectId } | null }
+//   refs     { resolve(job) → { ingredients:[mediaId], firstFrame:mediaId|null, lastFrame:mediaId|null } }
+//              resolves a job's referencePlan to media ids, uploading any local paths through Flow's
+//              own Upload media control (id read from Zzl0ze). Throws to fail the job; sets err.blocked
+//              to halt everything. Only called for jobs that have references.
 
 import { RPC } from './rpc.js';
 import { parseProjectMedia, parseMediaDetail, findResult } from './media.js';
@@ -35,7 +39,13 @@ function readyUrl(detail, kind) {
   }
 }
 
-export function createRunner({ store, flow, driver, files, workTab, settings, now = () => Date.now() }) {
+// A job needs a resolution pass only when its plan names real references (Ingredients or Frames).
+function needsReferences(job) {
+  const p = job.referencePlan;
+  return !!p && ((p.ingredients?.length ?? 0) > 0 || !!p.firstFrame || !!p.lastFrame);
+}
+
+export function createRunner({ store, flow, driver, files, workTab, refs, settings, now = () => Date.now() }) {
   async function rpc(key, inner) {
     const r = await flow.call(key, inner);
     if (!r.ok && r.kind === 'blocked') throw new Blocked(r.message);
@@ -111,7 +121,20 @@ export function createRunner({ store, flow, driver, files, workTab, settings, no
     // Wait (job stays approved) until the person brings Flow to the front; never switch tabs for them.
     if (!(await driver.inFront(tab.tabId))) return { waiting: 'Bring the Flow tab to the front to submit the next job' };
 
-    const job = await store.apply(next.id, { type: 'start', tabId: tab.tabId });
+    let job = await store.apply(next.id, { type: 'start', tabId: tab.tabId });
+    // Resolve and record the job's references before the composer is prepared, so the driver can
+    // attach them and the pre-spend check can verify, id for id, that the right ones are attached.
+    if (needsReferences(job)) {
+      let references;
+      try {
+        references = await refs.resolve(job);
+      } catch (e) {
+        if (e.blocked) throw new Blocked(e.blocked);
+        await store.apply(job.id, { type: 'fail', reason: `Could not attach references: ${e.message}` });
+        return;
+      }
+      job = await store.setReferences(job.id, references);
+    }
     let page;
     try {
       page = await driver.prepare(job);
