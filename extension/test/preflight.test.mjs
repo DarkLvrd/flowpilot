@@ -82,6 +82,36 @@ test('refuses while halted, with Generate disabled, or with an overlay open', ()
   assert.match(problems({ overlayOpen: true }).join(), /overlay/);
 });
 
+const REF_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const REF_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+test('Ingredients: the attached reference ids must match the job verbatim, in any order', () => {
+  const ing = { references: { input: 'ingredients', ingredients: [REF_A, REF_B], firstFrame: null, lastFrame: null } };
+  const attached = { attached: { ingredients: [REF_B, REF_A], firstFrame: null, lastFrame: null } };
+  assert.deepEqual(problems(attached, ing), []);
+  assert.match(problems({ attached: { ingredients: [REF_A], firstFrame: null, lastFrame: null } }, ing).join(), /reference|ingredient/i);
+  assert.match(problems({ attached: { ingredients: [REF_A, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'], firstFrame: null, lastFrame: null } }, ing).join(), /reference|ingredient/i);
+  assert.match(problems({ attached: { ingredients: [], firstFrame: null, lastFrame: null } }, ing).join(), /reference|ingredient/i);
+});
+
+test('Frames: the attached first/last frame ids must match the job', () => {
+  const job = { settings: { kind: 'video', input: 'frames', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
+    references: { input: 'frames', ingredients: [], firstFrame: REF_A, lastFrame: REF_B } };
+  const framePage = { input: 'frames', attached: { ingredients: [], firstFrame: REF_A, lastFrame: REF_B } };
+  assert.deepEqual(problems(framePage, job), []);
+  assert.match(problems({ ...framePage, attached: { ingredients: [], firstFrame: REF_B, lastFrame: REF_A } }, job).join(), /frame/i);
+  assert.match(problems({ ...framePage, attached: { ingredients: [], firstFrame: REF_A, lastFrame: null } }, job).join(), /last frame/i);
+  assert.match(problems({ ...framePage, attached: { ingredients: [], firstFrame: null, lastFrame: REF_B } }, job).join(), /first frame/i);
+});
+
+test('a job with no references and nothing attached passes the reference check', () => {
+  assert.deepEqual(problems({ attached: { ingredients: [], firstFrame: null, lastFrame: null } },
+    { references: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null } }), []);
+  // A reference attached when the job wanted none is refused.
+  assert.match(problems({ attached: { ingredients: [REF_A], firstFrame: null, lastFrame: null } },
+    { references: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null } }).join(), /reference|ingredient/i);
+});
+
 test('a free image may have no cost line, but a shown cost must still be 0', () => {
   const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0, modelFamily: '🍌 Nano Banana 2' };
   const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null, model: '🍌 Nano Banana 2' };

@@ -20,10 +20,15 @@ export function parseCostLine(text = '') {
   return numberOr(text.match(/Generating will use\s+(\d+)\s+credits?/i)?.[1]);
 }
 
-// job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null) }
-// page:   { tabId, url, prompt, summary, input, model, cost, generateEnabled, overlayOpen }
+// job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null),
+//           references? { input, ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null } }
+// page:   { tabId, url, prompt, summary, input, model, cost, generateEnabled, overlayOpen,
+//           attached? { ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null } }
 // budget: { cap, spent, halted }
 // Returns { ok, problems: [human-readable strings] }.
+// The reference check (docs/SPEC.md hard rules, now also: the right references are attached,
+// verified by media id) compares what the driver attached in the composer, id for id, to what the
+// job asked for. A job with no resolved references expects nothing attached.
 export function checkBeforeSpend(job, page, budget) {
   const problems = [];
   const s = job.settings;
@@ -47,6 +52,8 @@ export function checkBeforeSpend(job, page, budget) {
     if (page.input !== wantInput) problems.push(`input mode is ${page.input}, job wants ${wantInput}`);
   }
 
+  checkReferences(job.references, page.attached, problems);
+
   const cost = spendCost(job, page, problems);
   if (budget.cap == null) problems.push('no session credit cap is set');
   else if (cost != null && budget.spent + cost > budget.cap) {
@@ -57,6 +64,19 @@ export function checkBeforeSpend(job, page, budget) {
   if (page.overlayOpen) problems.push('an overlay is open over the page');
   return { ok: problems.length === 0, problems };
 }
+
+// Every reference the job resolved (media ids for id-refs, the ids its path-refs uploaded to) must
+// be the exact set attached in the composer — never more, never fewer, never a different id.
+function checkReferences(want = {}, attached = {}, problems) {
+  const wantIng = want.ingredients ?? [];
+  const gotIng = attached.ingredients ?? [];
+  const same = wantIng.length === gotIng.length && [...wantIng].sort().join() === [...gotIng].sort().join();
+  if (!same) problems.push(`attached references ${list(gotIng)}, job wants ${list(wantIng)}`);
+  if ((want.firstFrame ?? null) !== (attached.firstFrame ?? null)) problems.push(`first frame is ${attached.firstFrame ?? 'none'}, job wants ${want.firstFrame ?? 'none'}`);
+  if ((want.lastFrame ?? null) !== (attached.lastFrame ?? null)) problems.push(`last frame is ${attached.lastFrame ?? 'none'}, job wants ${want.lastFrame ?? 'none'}`);
+}
+
+const list = (ids) => (ids.length ? ids.join(', ') : 'none');
 
 // The credits this click will spend, or null (with a problem recorded) when it can't be trusted.
 function spendCost(job, page, problems) {
