@@ -11,6 +11,7 @@ import { createHelper } from '../lib/server.js';
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 const EXT2 = 'chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba';
 const MP4 = Buffer.from([0, 0, 0, 0x20, ...Buffer.from('ftypisom'), ...Array(52).fill(0)]);
+const PNG = Buffer.from([0x89, ...Buffer.from('PNG\r\n'), 0x1a, 0x0a, ...Array(32).fill(0)]);
 const tmp = () => mkdtempSync(join(tmpdir(), 'flowpilot-helper-'));
 
 async function start() {
@@ -173,5 +174,30 @@ test('the extension saves a finished file to an absolute path: media only, bytes
   }
   assert.equal(readFileSync(rc, 'utf8'), 'keep');
   assert.ok(!existsSync(join(dir, 'x.sh')));
+  ext.ws.close(); await t.helper.close();
+});
+
+test('the extension reads a reference image by absolute path: images only, bytes checked, bounded', async () => {
+  const t = await start();
+  const ext = await fakeExtension(t.port, async () => ({}));
+  const dir = tmp();
+  const face = join(dir, 'face.png');
+  writeFileSync(face, PNG);
+  const ok = await ext.ask('readMedia', { path: face });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.value.name, 'face.png');
+  assert.equal(ok.value.type, 'png');
+  assert.deepEqual(Buffer.from(ok.value.data, 'base64'), PNG);
+
+  // A video, a non-image and a missing file are all refused; nothing but an image comes back.
+  const notImage = join(dir, 'clip.mp4');
+  writeFileSync(notImage, MP4);
+  const secret = join(dir, 'secret.txt');
+  writeFileSync(secret, 'password');
+  for (const [path, why] of [[notImage, /PNG, JPEG or WebP/i], [secret, /PNG, JPEG or WebP/i], [join(dir, 'gone.png'), /not found/i], ['relative.png', /absolute/i]]) {
+    const r = await ext.ask('readMedia', { path });
+    assert.equal(r.ok, false, path);
+    assert.match(r.error, why);
+  }
   ext.ws.close(); await t.helper.close();
 });

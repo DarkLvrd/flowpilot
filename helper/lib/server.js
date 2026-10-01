@@ -6,7 +6,8 @@
 // Bridge messages (JSON):
 //   helper → extension  { id, cmd, args }          extension → helper  { id, ok, value | error }
 //   extension → helper  { rid, req, ... }          helper → extension  { rid, ok, value | error }
-//     req: 'pairCode' (the dashboard's "Pair an agent"), 'writeFile' { path, data: base64 }, 'ping'
+//     req: 'pairCode' (the dashboard's "Pair an agent"), 'writeFile' { path, data: base64 },
+//          'readMedia' { path } → { name, type, data: base64 } for a reference image, 'ping'
 //
 // Reachable only from this machine and never from web pages: bound to 127.0.0.1, Host must be
 // 127.0.0.1/localhost (DNS rebinding), requests carrying a browser Origin are refused, and only a
@@ -14,7 +15,7 @@
 
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
-import { writeMedia } from './files.js';
+import { writeMedia, readMedia } from './files.js';
 
 const MAX_BODY = 1 << 20;
 const EXTENSION_TIMEOUT_MS = 30_000;
@@ -49,6 +50,7 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
       case 'ping': return 'pong';
       case 'pairCode': return keyring.newCode();
       case 'writeFile': return { path: writeMedia(req.path, Buffer.from(String(req.data ?? ''), 'base64')) };
+      case 'readMedia': return readMedia(req.path);
       default: throw new Error(`Unknown request: ${req.req}`);
     }
   }
