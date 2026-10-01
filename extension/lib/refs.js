@@ -60,6 +60,20 @@ export function validateReferences({ input, refs = [], firstFrame, lastFrame } =
   throw new Error(`Unknown video input mode: ${JSON.stringify(input)}`);
 }
 
+// Maps resolved reference media ids to the names Flow shows on their picker tiles (each media's
+// prompt / uploaded filename, from Zzl0ze). The picker grid has no media id — thumbnails are /asb/
+// tokens (recon 2026-10-01) — so the driver finds a tile by this name. Ids with no known name are
+// omitted, so the driver fails closed rather than attach the wrong media.
+export function referenceNames(media, ids) {
+  const byId = new Map(media.map((m) => [m.mediaId, m.prompt]));
+  const names = {};
+  for (const id of ids) {
+    const n = byId.get(id);
+    if (n != null && n !== '') names[id] = n;
+  }
+  return names;
+}
+
 // After an upload the new media appears in Zzl0ze as a record that was not there before. Given the
 // media lists (from parseProjectMedia) captured before and after, return the one new media id, or
 // fail closed — never attach the wrong reference when zero or several appeared (docs/LESSONS.md #13).

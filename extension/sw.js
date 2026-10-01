@@ -8,7 +8,7 @@ import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost, recipeFor } from './lib/catalog.js';
 import { validateReferences } from './lib/refs.js';
 import { parseProjectMedia } from './lib/media.js';
-import { newlyUploadedId } from './lib/refs.js';
+import { newlyUploadedId, referenceNames } from './lib/refs.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
 import { createBridge, HELPER_PORT } from './lib/bridge.js';
 
@@ -136,7 +136,11 @@ const refs = {
     for (const ref of plan.ingredients ?? []) ingredients.push(await resolveOne(ref));
     const firstFrame = plan.firstFrame ? await resolveOne(plan.firstFrame) : null;
     const lastFrame = plan.lastFrame ? await resolveOne(plan.lastFrame) : null;
-    return { ingredients, firstFrame, lastFrame };
+    // The picker grid shows no media id, so the driver finds each tile by the media's name; look
+    // the names up from Zzl0ze (uploads land there under their filename).
+    const media = await projectMediaList(tab.projectId);
+    const names = referenceNames(media, [...ingredients, firstFrame, lastFrame].filter(Boolean));
+    return { ingredients, firstFrame, lastFrame, names };
   },
 };
 

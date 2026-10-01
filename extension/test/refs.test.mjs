@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
 import { parseProjectMedia } from '../lib/media.js';
-import { classifyRef, validateReferences, newlyUploadedId, MAX_INGREDIENTS } from '../lib/refs.js';
+import { classifyRef, validateReferences, newlyUploadedId, referenceNames, MAX_INGREDIENTS } from '../lib/refs.js';
 import { fixture } from './helpers.mjs';
 
 const ID = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
@@ -56,6 +56,14 @@ test('frames input needs a first frame; last is optional; no extra refs', () => 
 
 test('an unknown input mode is refused', () => {
   assert.throws(() => validateReferences({ input: 'wat' }), /input/i);
+});
+
+test('referenceNames maps media ids to their Zzl0ze names (the driver matches picker tiles by name)', () => {
+  const media = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze'), 'Zzl0ze').data);
+  const names = referenceNames(media, [ID, ID2, 'ffffffff-ffff-4fff-8fff-ffffffffffff']);
+  assert.equal(names[ID], 'a boy on a horse');
+  assert.equal(names[ID2], 'he is riding his house');
+  assert.ok(!('ffffffff-ffff-4fff-8fff-ffffffffffff' in names)); // unknown id omitted -> driver fails closed
 });
 
 test('newlyUploadedId returns the single new media id after an upload, else fails closed', () => {

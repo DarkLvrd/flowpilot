@@ -165,25 +165,37 @@
     await waitFor(() => !picker(), { what: 'the asset picker to close' }).catch(() => {});
   }
 
-  // The clickable tile for a media id inside the open picker, or null.
-  const pickerTile = (mediaId) => {
+  // A picker tile carries no media id (thumbnails are /asb/ tokens, recon 2026-10-01), so it is
+  // matched by the media's name — the prompt / uploaded filename Flow shows as the tile label, with
+  // the trailing kind word (Image/Video/…) stripped. The pre-spend check still verifies the real id.
+  const KIND_LABELS = ['Image', 'Video', 'Audio', 'Voice', 'Avatar', 'Character'];
+  const tileName = (el) => {
+    const label = visibleText(el);
+    for (const k of KIND_LABELS) if (label.endsWith(k) && label.length > k.length) return label.slice(0, -k.length);
+    return label;
+  };
+  const pickerTiles = (name) => {
     const p = picker();
-    const img = p && $$('img, video', p).find((i) => contentId(i) === mediaId);
-    return img ? (img.closest('button, [role=button], [role=option], [role=gridcell]') || img.parentElement) : null;
+    if (!p || !name) return [];
+    return $$('button, [role=button], [role=option], [role=gridcell]', p).filter((t) => visibleText(t) === name || tileName(t) === name);
   };
 
-  async function selectInPicker(mediaId) {
-    const tile = await waitFor(() => pickerTile(mediaId), { what: `the picker tile for ${mediaId}` });
-    if (!clickable(tile)) throw new Error(`The picker tile for ${mediaId} is not clickable`);
-    tile.click();
+  // Selects the one tile named `name`; fails closed if none (times out) or several match — never
+  // guesses which media to attach when names collide.
+  async function selectInPicker(name) {
+    const tiles = await waitFor(() => { const m = pickerTiles(name); return m.length ? m : null; },
+      { what: `the picker tile named "${name}"` });
+    if (tiles.length > 1) throw new Error(`Several media are named "${name}" in the picker; cannot tell which to attach`);
+    if (!clickable(tiles[0])) throw new Error(`The picker tile named "${name}" is not clickable`);
+    tiles[0].click();
   }
 
-  async function confirmPicker() {
+  // Some pickers attach on the tile click and close; others keep a final "Add to prompt". Click it
+  // only if it is there (recon 2026-10-01: a single ingredient attaches on click).
+  function confirmIfPresent() {
     const p = picker();
     const add = p && $$('button, [role=button]', p).find((b) => ADD_TO_PROMPT.test(text(b)));
-    if (!add) throw new Error('No "Add to prompt" button in the picker');
-    add.click();
-    await waitFor(() => !picker(), { what: 'the picker to close after adding' });
+    if (add && clickable(add)) add.click();
   }
 
   // Uploads one file through Flow's own "Upload media" control by building a File from the bytes and
@@ -208,28 +220,37 @@
     return { ok: true };
   }
 
-  // Attaches already-in-project references (ids) to the composer for the job's input mode. The mode
-  // radios must already be set to Video + Ingredients/Frames (attaching in Image mode opens the
-  // out-of-scope image editor — recon 2026-10-01).
+  // Attaches already-in-project references to the composer for the job's input mode. The mode radios
+  // must already be set to Video + Ingredients/Frames (attaching in Image mode opens the out-of-scope
+  // image editor — recon 2026-10-01). References carry a `names` map (media id → tile name) because
+  // the picker grid shows no id. Closes the picker in every case so a failure never leaves it open.
   async function attachReferences(input, references) {
-    if (input === 'frames') {
-      for (const which of ['firstFrame', 'lastFrame']) {
-        const id = references?.[which];
-        if (!id) continue;
-        const slot = $$('button, [role=button]', promptBox() || document).find((b) => visibleText(b) === FRAME_SLOT[which]);
-        if (!clickable(slot)) throw new Error(`The ${FRAME_SLOT[which]} frame slot is not clickable`);
-        slot.click();
-        await waitFor(picker, { what: `the picker for the ${FRAME_SLOT[which]} frame` });
-        await selectInPicker(id);
-        await confirmPicker();
+    const names = references?.names ?? {};
+    const nameFor = (id) => names[id] ?? id;
+    try {
+      if (input === 'frames') {
+        for (const which of ['firstFrame', 'lastFrame']) {
+          const id = references?.[which];
+          if (!id) continue;
+          const slot = $$('button, [role=button]', promptBox() || document).find((b) => visibleText(b) === FRAME_SLOT[which]);
+          if (!clickable(slot)) throw new Error(`The ${FRAME_SLOT[which]} frame slot is not clickable`);
+          slot.click();
+          await waitFor(picker, { what: `the picker for the ${FRAME_SLOT[which]} frame` });
+          await selectInPicker(nameFor(id));
+          confirmIfPresent();
+          await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
+        }
+        return;
       }
-      return;
+      for (const id of references?.ingredients ?? []) {
+        await openPicker();
+        await selectInPicker(nameFor(id));
+        confirmIfPresent();
+        await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
+      }
+    } finally {
+      await closePicker().catch(() => {});
     }
-    const ids = references?.ingredients ?? [];
-    if (ids.length === 0) return;
-    await openPicker();
-    for (const id of ids) await selectInPicker(id);
-    await confirmPicker();
   }
 
   function readPage() {
@@ -318,6 +339,7 @@
     // Flow's zoneless Angular only re-renders on timers/animation frames, which Chrome pauses or
     // throttles in background tabs: clicks land but the page never updates (LESSONS.md #23).
     if (document.visibilityState !== 'visible') throw new Error('The Flow work tab must be the front tab of its window');
+    await closePicker().catch(() => {}); // a prior failed attach may have left the asset picker open over the composer
     try {
       await fillPrompt(job.prompt);
     } catch (e) {
