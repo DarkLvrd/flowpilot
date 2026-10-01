@@ -118,6 +118,43 @@ Text-to-video, 360p 4 s, Ingredients mode, no references. Order after the click:
   first, then `flow-content.google/video/<mediaId>?Expires=…&Signature=…`. Taking the first one
   downloaded a JPEG; the magic-byte check rejected it. The reader now asks for the job's kind.
 
+## Uploads and references (Ingredients + Frames, 2026-10-01, one synthetic image uploaded, 0 credits)
+
+Proven on the practice account by uploading one plain 16×16 teal PNG (never a photo of a person)
+and attaching it; no Generate, no credits. The composer was restored to the project root after.
+
+- **Upload control.** The asset picker's upload button has **no `aria-label`**; it carries
+  `mattooltip="Upload media"` and class `sidebar-upload-btn`. Clicking it makes Flow append a hidden
+  `<input type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.heif,.heic,.mp4,.m4v,.mov,.3gp,.avi"
+  multiple style="display:none">` to the page (not inside the picker). No native file dialog is
+  needed: set `input.files` from a `DataTransfer` built from the bytes and dispatch `input`+`change`
+  (what a content script can do). `maseQ` then fires (HTTP 200) and the new media appears in
+  `Zzl0ze` within ~10 s — read the new id from `Zzl0ze` (LESSONS #13), not from the grid.
+- **One upload adds two uuids to `Zzl0ze`**: the media id and its workflow id. `parseProjectMedia`
+  returns the real media id per record, so the `Zzl0ze` diff (`newlyUploadedId`) is authoritative;
+  a raw uuid regex over the response over-counts.
+- **Tiles carry the media id in their thumbnail**: `<img src="https://flow-content.google/image/<id>?…">`
+  (video tiles use `/video/<id>`). So a tile is found by matching this id — solving LESSONS #14 for
+  the picker (the main grid still has no `data-media-id`). The composer's attached references show
+  the same `flow-content.google/<image|video>/<id>` thumbnails, so attached ids are read back the
+  same way (scope the read to the prompt box — `flow-prompt-box` › `flow-ingredient-bar` — or the
+  project-media grid thumbnails are caught too).
+- **Ingredients attach.** Settings → Video + Ingredients, then `Add ingredients to the prompt box`
+  (composer button, this aria-label) opens the picker; select each tile, then click **`Add to
+  prompt`** (the picker's confirm button). The composer stays a video composer.
+- **Image + reference traps the image editor.** Selecting a tile while the composer is in **Image**
+  mode (Nano Banana) switches it to `flow-edit-image-prompt-box` / `flow-image-editor` and the URL
+  to `/project/<pid>/edit/<workflowId>` — that is the out-of-scope *edit* flow. Set Video +
+  Ingredients **before** attaching. Leaving the editor needs navigating back to `/project/<pid>`.
+- **Frames attach.** Settings → Video + Frames shows two slots labelled **`Start`** and **`End`**
+  (plus a `Swap first and last frames` button) inside `flow-ingredient-bar`. Click a slot to open
+  the same picker; select/upload, then `Add to prompt`. The filled slots show the
+  `flow-content.google/image/<id>` thumbnails in DOM order (Start, then End).
+- **Settings radios (confirmed):** `Image | Video`, `Frames | Ingredients`, `16:9 | 9:16`,
+  `360p | 720p`, `4s | 6s | 8s | 10s`, `x1 | x2 | x3 | x4`.
+- **reCAPTCHA stays Flow's own**: the upload triggered `recaptcha/enterprise/reload` and `/clr` on
+  `www.google.com` — Flow minting its own token when its own control runs. Flow Pilot never touches it.
+
 ## Loaded by the page itself (do not touch)
 
 `www.google.com/recaptcha/enterprise.js` and its anchor iframe load on every project page;

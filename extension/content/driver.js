@@ -15,6 +15,12 @@
     model: 'Select model family',
   };
   const BLOCK_TEXT = /unusual activity|UNUSUAL_ACTIVITY|temporarily blocked/i;
+  // A media tile/chip shows its id in its thumbnail URL (recon 2026-10-01); this is how references
+  // are found in the picker and read back from the composer — the grid has no data-media-id (#14).
+  const CONTENT_ID = /flow-content\.google\/(?:image|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  const UPLOAD_TOOLTIP = 'Upload media';
+  const ADD_TO_PROMPT = /^add to prompt$/i;
+  const FRAME_SLOT = { firstFrame: 'Start', lastFrame: 'End' };
 
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -126,6 +132,106 @@
     return checks.map(([name, ok]) => ({ name, ok }));
   }
 
+  // ---- References: the asset picker, uploads and attach (recon 2026-10-01) ------------------
+
+  // The open asset picker (a CDK overlay), or null. The settings panel is not an overlay here.
+  const picker = () => $$('.cdk-overlay-pane').find((el) => el.offsetParent !== null && el.querySelector('button, [role=button]')) || null;
+  // The media id in an <img>/<video> thumbnail, or null.
+  const contentId = (el) => (el?.getAttribute('src') || el?.src || '').match(CONTENT_ID)?.[1] ?? null;
+  const promptBox = () => composer()?.closest('flow-prompt-box') || composer()?.parentElement || null;
+
+  // The media ids attached in the composer, scoped to the prompt box's ingredient bar so the
+  // project-media grid's own thumbnails are never mistaken for attachments. In Frames mode the two
+  // slots (Start, End) sit in DOM order, so the first id is the first frame and the second the last.
+  function readAttached(input) {
+    const bar = promptBox()?.querySelector('flow-ingredient-bar') || promptBox();
+    const ids = bar ? [...new Set($$('img, video', bar).map(contentId).filter(Boolean))] : [];
+    if (input === 'frames') return { ingredients: [], firstFrame: ids[0] ?? null, lastFrame: ids[1] ?? null };
+    return { ingredients: ids, firstFrame: null, lastFrame: null };
+  }
+
+  async function openPicker() {
+    if (picker()) return;
+    const btn = composerButton(NAMES.ingredients);
+    if (!clickable(btn)) throw new Error('Cannot open the asset picker (Add ingredients button not clickable)');
+    btn.click();
+    await waitFor(picker, { what: 'the asset picker' });
+  }
+
+  async function closePicker() {
+    if (!picker()) return;
+    const backdrop = $$('.cdk-overlay-backdrop').find((el) => el.offsetParent !== null);
+    if (backdrop) backdrop.click(); else composerButton(NAMES.ingredients)?.click();
+    await waitFor(() => !picker(), { what: 'the asset picker to close' }).catch(() => {});
+  }
+
+  // The clickable tile for a media id inside the open picker, or null.
+  const pickerTile = (mediaId) => {
+    const p = picker();
+    const img = p && $$('img, video', p).find((i) => contentId(i) === mediaId);
+    return img ? (img.closest('button, [role=button], [role=option], [role=gridcell]') || img.parentElement) : null;
+  };
+
+  async function selectInPicker(mediaId) {
+    const tile = await waitFor(() => pickerTile(mediaId), { what: `the picker tile for ${mediaId}` });
+    if (!clickable(tile)) throw new Error(`The picker tile for ${mediaId} is not clickable`);
+    tile.click();
+  }
+
+  async function confirmPicker() {
+    const p = picker();
+    const add = p && $$('button, [role=button]', p).find((b) => ADD_TO_PROMPT.test(text(b)));
+    if (!add) throw new Error('No "Add to prompt" button in the picker');
+    add.click();
+    await waitFor(() => !picker(), { what: 'the picker to close after adding' });
+  }
+
+  // Uploads one file through Flow's own "Upload media" control by building a File from the bytes and
+  // setting it on Flow's hidden <input type=file> (no native dialog; LESSONS #13). The caller reads
+  // the new media id from Zzl0ze; this never waits for the grid. Leaves the picker open.
+  async function uploadFile(fileBase64, name, type) {
+    if (agentPanelOpen()) throw new Error('Agent mode is on in Flow; turn it off, then run the job again');
+    await openPicker();
+    const upload = $$('button, [role=button]', picker()).find((b) => b.getAttribute('mattooltip') === UPLOAD_TOOLTIP || b.classList.contains('sidebar-upload-btn') || /upload media/i.test(text(b)));
+    if (!clickable(upload)) throw new Error('No "Upload media" control in the picker');
+    upload.click();
+    const input = await waitFor(() => $$('input[type=file]').find((i) => (i.accept || '').includes('png')),
+      { what: "Flow's upload file input" });
+    const bin = atob(fileBase64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], name, { type }));
+    input.files = data.files;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true };
+  }
+
+  // Attaches already-in-project references (ids) to the composer for the job's input mode. The mode
+  // radios must already be set to Video + Ingredients/Frames (attaching in Image mode opens the
+  // out-of-scope image editor — recon 2026-10-01).
+  async function attachReferences(input, references) {
+    if (input === 'frames') {
+      for (const which of ['firstFrame', 'lastFrame']) {
+        const id = references?.[which];
+        if (!id) continue;
+        const slot = $$('button, [role=button]', promptBox() || document).find((b) => visibleText(b) === FRAME_SLOT[which]);
+        if (!clickable(slot)) throw new Error(`The ${FRAME_SLOT[which]} frame slot is not clickable`);
+        slot.click();
+        await waitFor(picker, { what: `the picker for the ${FRAME_SLOT[which]} frame` });
+        await selectInPicker(id);
+        await confirmPicker();
+      }
+      return;
+    }
+    const ids = references?.ingredients ?? [];
+    if (ids.length === 0) return;
+    await openPicker();
+    for (const id of ids) await selectInPicker(id);
+    await confirmPicker();
+  }
+
   function readPage() {
     const input = radio('Frames')?.checked ? 'frames' : radio('Ingredients')?.checked ? 'ingredients' : null;
     return {
@@ -230,7 +336,19 @@
     const withPanel = readPage();
     const model = visibleText(button(NAMES.model)) || null;
     await closeSettings();
+    // Attach references once the mode is Video + Ingredients/Frames (attaching in Image mode opens
+    // the out-of-scope image editor). References were resolved to media ids by the engine first.
+    if (s.kind === 'video' && job.references) {
+      try {
+        await attachReferences(s.input, job.references);
+      } catch (e) {
+        if (e instanceof Halt) return { ...readPage(), halt: e.message };
+        throw e;
+      }
+    }
     const after = readPage();
+    // What is actually attached now, read back by media id for the pre-spend check.
+    after.attached = readAttached(s.kind === 'video' ? s.input : 'ingredients');
     // Mode radios, model and cost are only visible with the panel open; the rest is read after closing.
     return { ...after, input: withPanel.input, costText: withPanel.costText, model };
   }
@@ -264,7 +382,7 @@
 
   const inFront = () => document.visibilityState === 'visible';
 
-  const api = { selfCheck, readPage, prepare, clickGenerate, inFront };
+  const api = { selfCheck, readPage, prepare, clickGenerate, inFront, uploadFile, closePicker };
   globalThis.__flowPilotDriver = api; // isolated world only; the page cannot see it
 
   if (globalThis.chrome?.runtime?.onMessage) {

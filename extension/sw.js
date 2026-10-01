@@ -8,6 +8,7 @@ import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost, recipeFor } from './lib/catalog.js';
 import { validateReferences } from './lib/refs.js';
 import { parseProjectMedia } from './lib/media.js';
+import { newlyUploadedId } from './lib/refs.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
 import { createBridge, HELPER_PORT } from './lib/bridge.js';
 
@@ -80,12 +81,63 @@ const driver = {
       cost: parseCostLine(p.costText ?? ''),
       generateEnabled: p.generateEnabled,
       overlayOpen: p.overlayOpen || p.agentPanelOpen,
+      attached: p.attached,
       blocked: p.blocked,
       halt: p.halt,
     };
   },
   clickGenerate: (tabId, expect) => driverCall(tabId, 'clickGenerate', expect),
   inFront: (tabId) => driverCall(tabId, 'inFront'),
+  uploadFile: (tabId, data, name, type) => driverCall(tabId, 'uploadFile', data, name, type),
+  closePicker: (tabId) => driverCall(tabId, 'closePicker'),
+};
+
+// ---- References: resolve a job's referencePlan to media ids --------------------------------
+
+const IMAGE_MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
+
+async function projectMediaList(projectId) {
+  const r = await flow.call('projectMedia', [`projects/${projectId}`, null, null, null, [1]]);
+  if (r.kind === 'blocked') throw Object.assign(new Error(r.message), { blocked: r.message });
+  if (!r.ok) throw new Error(`${RPC.projectMedia}: ${r.message}`);
+  return parseProjectMedia(r.data);
+}
+
+// Polls Zzl0ze until the uploaded media shows up (LESSONS #13: read the id from Zzl0ze, never wait
+// for the grid). No fixed sleep before an action — this waits on real Zzl0ze responses.
+async function pollNewMediaId(projectId, before, { tries = 40, everyMs = 3000 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise((res) => setTimeout(res, everyMs));
+    const after = await projectMediaList(projectId);
+    try { return newlyUploadedId(before, after); } catch { /* not visible yet, or several appeared */ }
+  }
+  throw new Error('The uploaded reference did not appear in the project in time');
+}
+
+// Turns a job's classified referencePlan into media ids: existing ids pass through; a local path is
+// read by the helper (bytes magic-checked there), uploaded through Flow's own Upload media control,
+// and its new id read from Zzl0ze. Throws to fail the job; err.blocked halts everything.
+const refs = {
+  async resolve(job) {
+    const tab = await workTab.get();
+    if (!tab) throw new Error('No work tab');
+    const resolveOne = async (ref) => {
+      if (ref.kind === 'mediaId') return ref.mediaId;
+      if (!bridge.connected) throw new Error(`The helper is not connected, so it cannot read the reference file ${ref.path} (start it with \`npx flowpilot serve\`)`);
+      const media = await bridge.request('readMedia', { path: ref.path });
+      const before = await projectMediaList(tab.projectId);
+      await driver.uploadFile(tab.tabId, media.data, media.name, IMAGE_MIME[media.type] ?? `image/${media.type}`);
+      const id = await pollNewMediaId(tab.projectId, before);
+      await driver.closePicker(tab.tabId).catch(() => {});
+      return id;
+    };
+    const plan = job.referencePlan ?? { ingredients: [], firstFrame: null, lastFrame: null };
+    const ingredients = [];
+    for (const ref of plan.ingredients ?? []) ingredients.push(await resolveOne(ref));
+    const firstFrame = plan.firstFrame ? await resolveOne(plan.firstFrame) : null;
+    const lastFrame = plan.lastFrame ? await resolveOne(plan.lastFrame) : null;
+    return { ingredients, firstFrame, lastFrame };
+  },
 };
 
 // ---- Files --------------------------------------------------------------------------------
@@ -143,7 +195,7 @@ async function tick() {
   if (ticking) return ticking;
   ticking = (async () => {
     const settings = { ...DEFAULT_SETTINGS, ...(await local.get('flowpilot.settings', {})) };
-    const runner = createRunner({ store, flow, driver, files, workTab, settings });
+    const runner = createRunner({ store, flow, driver, files, workTab, refs, settings });
     const result = await runner.tick();
     await local.set('flowpilot.lastTick', { at: Date.now(), error: result.error ?? null, waiting: result.waiting ?? null });
     await guardWorkTab();
