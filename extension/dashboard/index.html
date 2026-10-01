@@ -23,6 +23,10 @@
     <label>Resolution</label><select name="resolution"><option>360p</option><option>720p</option></select>
     <label>Duration</label><select name="durationS"><option>4</option><option>6</option><option>8</option><option>10</option></select>
     <label>Aspect</label><select name="aspect"><option>16:9</option><option>9:16</option></select>
+    <label>Ingredients — reference photos, one media id or absolute image path per line</label>
+    <textarea name="refs" placeholder="a Flow media id, or e.g. /Users/me/face.png"></textarea>
+    <label>Frames — first frame (media id or absolute image path)</label><input name="firstFrame">
+    <label>Frames — last frame (optional)</label><input name="lastFrame">
     <button>Add to queue</button>
   </form>
   <p id="error" class="banner" hidden></p>

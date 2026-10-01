@@ -49,7 +49,8 @@ is overlaid on Flow's own page.
   and opens the dashboard.
 - **Dashboard** — the self-check summary, an **Agents** section with the **Pair an agent** button,
   the **Session credit cap** (set or raise it here; nothing is submitted past it), an **Add a job**
-  form (name, prompt, kind image/video, resolution, duration, aspect), and the **Queue** table.
+  form (name, prompt, kind image/video, resolution, duration, aspect, and references — Ingredients
+  or Frames, below), and the **Queue** table.
 - **Approvals** — each queued job shows an **Approve** button; jobs wait as `queued` until approved,
   then run from the work tab. Queued/approved/halted jobs can be **Cancel**led; a failed job that
   was never clicked can be **Re-queue**d, and one whose render finished can **Retry download**.
@@ -77,6 +78,7 @@ flowpilot job <id>                     One job
 flowpilot add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|720p]
              [--duration 4|6|8|10] [--aspect 16:9|9:16] [--count 1-4]
              [--project ID] [--out /abs/path.mp4]
+             [--ref REF ...] [--first-frame REF] [--last-frame REF]
 flowpilot approve|cancel|requeue|retry-download <id>
 flowpilot doctor                       Check the setup
 flowpilot mcp                          Run as an MCP server on stdio
@@ -86,7 +88,24 @@ Add `--json` to any command for raw JSON. The credit cap, clearing a halt and ch
 tab are dashboard-only. (Invoke as `node helper/bin/flowpilot.js <command>` if `flowpilot` is not
 on your `PATH`.)
 
+**References (face-matched character work).** A video job may carry reference photos, each a Flow
+media id or an absolute image path (`.png`/`.jpg`/`.webp`); the helper reads a path's bytes and
+Flow Pilot uploads it through Flow's own **Upload media** control, never sending cookies or tokens.
+**Ingredients** shape the whole video — `--ref` (repeat for up to three) makes a reference-to-video
+generation. **Frames** generate the video between a start and end photo — `--first-frame` (and an
+optional `--last-frame`). Before it spends, Flow Pilot checks the right references are attached,
+verified by media id. Example:
+
+```
+flowpilot add --prompt "she turns to face the camera" --ref /Users/me/face.png --resolution 360p --duration 4
+flowpilot add --prompt "a slow zoom in" --first-frame /Users/me/wide.png --last-frame /Users/me/close.png
+```
+
 ### MCP server
+
+`flowpilot_add_job` also takes `refs` (1-3 Ingredients reference photos), `firstFrame` and
+`lastFrame` (Frames), each a Flow media id or an absolute image path — the same face-matched
+character work as the CLI above.
 
 `flowpilot mcp` runs an MCP server on stdio with seven job tools: `flowpilot_status`,
 `flowpilot_job`, `flowpilot_add_job`, `flowpilot_approve`, `flowpilot_cancel`, `flowpilot_requeue`

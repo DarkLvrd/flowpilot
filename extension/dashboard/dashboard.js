@@ -54,7 +54,14 @@ $('pair').onclick = act(async () => {
 $('add').onsubmit = act(async (ev) => {
   ev.preventDefault();
   const f = Object.fromEntries(new FormData(ev.target));
-  await send('addJob', { spec: { ...f, durationS: Number(f.durationS), input: 'text' } });
+  // References: ingredient refs one per line/comma; first/last frame single. The service worker
+  // infers the input mode (Ingredients vs Frames vs plain text) and validates the references.
+  const refs = (f.refs ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  const spec = { name: f.name, prompt: f.prompt, kind: f.kind, resolution: f.resolution, durationS: Number(f.durationS), aspect: f.aspect };
+  if (refs.length) spec.refs = refs;
+  if (f.firstFrame?.trim()) spec.firstFrame = f.firstFrame.trim();
+  if (f.lastFrame?.trim()) spec.lastFrame = f.lastFrame.trim();
+  await send('addJob', { spec });
   ev.target.reset();
 });
 chrome.storage.onChanged.addListener(() => render());
