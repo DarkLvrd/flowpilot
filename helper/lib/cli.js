@@ -15,6 +15,10 @@ const USAGE = `Usage: flowpilot <command>
   job <id>                  One job
   add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|720p]
       [--duration 4|6|8|10] [--aspect 16:9|9:16] [--count 1-4] [--project ID] [--out /abs/path.mp4]
+      [--ref REF ...]           Ingredients: reference photo(s) — a Flow media id or an absolute
+                                image path (repeat --ref for several); face-matched character work
+      [--first-frame REF]       Frames: the start photo (media id or absolute image path)
+      [--last-frame REF]        Frames: the end photo; the video is generated in between
   approve|cancel|requeue|retry-download <id>
   doctor                    Check the setup
   mcp                       Run as an MCP server on stdio
@@ -26,6 +30,7 @@ const OPTIONS = {
   duration: { type: 'string' }, aspect: { type: 'string' }, count: { type: 'string' }, project: { type: 'string' },
   out: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   'forget-extension': { type: 'boolean' },
+  ref: { type: 'string', multiple: true }, 'first-frame': { type: 'string' }, 'last-frame': { type: 'string' },
 };
 
 class Usage extends Error {}
@@ -66,6 +71,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
           name: o.name, prompt: o.prompt, kind: o.kind, resolution: o.resolution,
           durationS: o.duration && Number(o.duration), aspect: o.aspect, count: o.count && Number(o.count),
           projectId: o.project, outputPath: o.out,
+          refs: o.ref, firstFrame: o['first-frame'], lastFrame: o['last-frame'],
         }).filter(([, v]) => v !== undefined));
         print(await client().add(spec), (j) => `Added ${j.id} (${j.state}, ${j.expectedCost ?? '?'} credits). Approve it with \`flowpilot approve ${j.id}\`.`);
         return 0;

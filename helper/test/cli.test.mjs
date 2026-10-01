@@ -74,6 +74,16 @@ test('add, approve, cancel and job forward to the extension; --json prints raw J
   await w.close();
 });
 
+test('add forwards Ingredients (--ref, repeatable) and Frames (--first-frame/--last-frame)', async () => {
+  const w = await world();
+  await w.run('pair', w.keyring.newCode().code);
+  await w.run('add', '--prompt', 'face', '--ref', '/pics/a.png', '--ref', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '--json');
+  assert.deepEqual(w.calls.at(-1), ['addJob', { spec: { prompt: 'face', refs: ['/pics/a.png', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] } }]);
+  await w.run('add', '--prompt', 'tween', '--first-frame', '/pics/start.png', '--last-frame', '/pics/end.png', '--json');
+  assert.deepEqual(w.calls.at(-1), ['addJob', { spec: { prompt: 'tween', firstFrame: '/pics/start.png', lastFrame: '/pics/end.png' } }]);
+  await w.close();
+});
+
 test('errors are short and the exit code is non-zero', async () => {
   const w = await world({ extension: false });
   await w.run('pair', w.keyring.newCode().code);

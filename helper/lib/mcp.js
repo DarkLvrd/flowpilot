@@ -22,7 +22,7 @@ const TOOLS = [
   },
   {
     name: 'flowpilot_add_job',
-    description: 'Queue a Google Flow generation. It waits as "queued" until approved, then runs from the work tab; the result is saved to Downloads/FlowPilot or to outputPath. Returns the job with its expected credit cost.',
+    description: 'Queue a Google Flow generation. It waits as "queued" until approved, then runs from the work tab; the result is saved to Downloads/FlowPilot or to outputPath. For face-matched character work, add reference photos: Ingredients (refs) shape the whole video, or Frames (firstFrame + optional lastFrame) generate the video between a start and end photo. Returns the job with its expected credit cost.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -33,6 +33,9 @@ const TOOLS = [
         durationS: { type: 'integer', enum: [4, 6, 8, 10] },
         aspect: { type: 'string', enum: ['16:9', '9:16'] },
         count: { type: 'integer', minimum: 1, maximum: 4 },
+        refs: { type: 'array', items: { type: 'string' }, maxItems: 3, description: 'Ingredients: 1-3 reference photos, each a Flow media id or an absolute image path (png/jpeg/webp). Makes a reference-to-video generation.' },
+        firstFrame: { type: 'string', description: 'Frames: the start photo (a Flow media id or an absolute image path).' },
+        lastFrame: { type: 'string', description: 'Frames: the end photo; the video is generated between firstFrame and lastFrame. Needs firstFrame.' },
         projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' },
         outputPath: { type: 'string', description: 'Absolute path for the result (.mp4 for video; .png/.jpg/.webp for image). Never overwrites.' },
       },

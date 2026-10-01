@@ -66,6 +66,15 @@ test('tools call the helper and return its answer as JSON text; failures are too
   await s.call('tools/call', { name: 'flowpilot_retry_download', arguments: { id: 'j1' } });
   assert.deepEqual(client.calls[1], ['retry-download', 'j1']);
 
+  // Ingredients and Frames params forward verbatim; the add_job schema advertises them.
+  const addTool = (await s.call('tools/list', {})).result.tools.find((t) => t.name === 'flowpilot_add_job');
+  for (const p of ['refs', 'firstFrame', 'lastFrame']) assert.ok(addTool.inputSchema.properties[p], `schema advertises ${p}`);
+  const ref = await s.call('tools/call', { name: 'flowpilot_add_job', arguments: { prompt: 'face', refs: ['/pics/a.png', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] } });
+  assert.equal(ref.result.isError, false);
+  assert.deepEqual(client.calls.at(-1), ['add', { prompt: 'face', refs: ['/pics/a.png', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] }]);
+  await s.call('tools/call', { name: 'flowpilot_add_job', arguments: { prompt: 'tween', firstFrame: '/pics/start.png', lastFrame: '/pics/end.png' } });
+  assert.deepEqual(client.calls.at(-1), ['add', { prompt: 'tween', firstFrame: '/pics/start.png', lastFrame: '/pics/end.png' }]);
+
   const bad = await s.call('tools/call', { name: 'flowpilot_approve', arguments: { id: 'bad' } });
   assert.equal(bad.result.isError, true);
   assert.match(bad.result.content[0].text, /Cannot approve/);
