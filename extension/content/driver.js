@@ -143,9 +143,12 @@
   // The media ids attached in the composer, scoped to the prompt box's ingredient bar so the
   // project-media grid's own thumbnails are never mistaken for attachments. In Frames mode the two
   // slots (Start, End) sit in DOM order, so the first id is the first frame and the second the last.
-  function readAttached(input) {
+  function attachedIdsNow() {
     const bar = promptBox()?.querySelector('flow-ingredient-bar') || promptBox();
-    const ids = bar ? [...new Set($$('img, video', bar).map(contentId).filter(Boolean))] : [];
+    return bar ? [...new Set($$('img, video', bar).map(contentId).filter(Boolean))] : [];
+  }
+  function readAttached(input) {
+    const ids = attachedIdsNow();
     if (input === 'frames') return { ingredients: [], firstFrame: ids[0] ?? null, lastFrame: ids[1] ?? null };
     return { ingredients: ids, firstFrame: null, lastFrame: null };
   }
@@ -239,6 +242,9 @@
           await selectInPicker(nameFor(id));
           confirmIfPresent();
           await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
+          // The thumbnail renders just after the picker closes; wait for it so the pre-spend check
+          // (which reads attached ids) does not run before the reference is on the page.
+          await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: 15_000 });
         }
         return;
       }
@@ -247,6 +253,7 @@
         await selectInPicker(nameFor(id));
         confirmIfPresent();
         await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
+        await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: 15_000 });
       }
     } finally {
       await closePicker().catch(() => {});
