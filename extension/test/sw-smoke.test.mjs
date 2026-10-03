@@ -249,6 +249,108 @@ test('the Flow tab can be brought forward on a person’s click, and the status 
   assert.equal(s.waitingFor.count, s.counts.approved);
 });
 
+// ---- Shots and the still→anchor gate (report §2.3-§2.5, Phase 2) ------------------------------
+
+const REF_MEDIA = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
+
+// An approved character with a locked reference, then a shot list that names it: importing queues a
+// free still job per row and never a video job.
+const importOneShot = async (row) => {
+  await send({ cmd: 'entityUpsert', entity: { name: 'ShotRudy', kind: 'character', description: 'a heavyset Black man in his 30s', approved: true, refs: [{ mediaId: REF_MEDIA, role: 'sheet', label: 'shotrudy_sheet_v1' }] } });
+  const r = await send({ cmd: 'importShots', rows: [row] });
+  assert.equal(r.ok, true, r.error);
+  return r.value.added[0];
+};
+
+test('importing a shot list queues one free still per row and no video job at all', async () => {
+  const added = await importOneShot({ scene: 4, beat: 'driving home', entities: ['ShotRudy'], mode: 'ingredients' });
+  assert.equal(added.videoCost, 7); // abra_r2v_4s at the default 720p, shown before any click
+  const shots = (await send({ cmd: 'shots' })).value.shots;
+  const shot = shots.find((s) => s.id === added.shotId);
+  assert.equal(shot.mode, 'ingredients');
+  assert.equal(shot.still.jobId, added.stillJobId);
+  assert.equal(shot.videoJob, null);
+  assert.equal(shot.gate.ok, false);
+  assert.equal((await send({ cmd: 'status' })).value.jobs.find((j) => j.id === added.stillJobId).settings.kind, 'image');
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+});
+
+test('the gate: a shot with no finished still cannot create a video job', async () => {
+  const added = await importOneShot({ scene: 5, entities: ['ShotRudy'], mode: 'ingredients' });
+  const r = await send({ cmd: 'approveAnchor', shotId: added.shotId });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /no finished still|still/i);
+});
+
+test('approving a finished still records the ledger entry and materialises the video job', async () => {
+  const added = await importOneShot({ scene: 6, entities: ['ShotRudy'], mode: 'ingredients' });
+  markStillDone(added.stillJobId);
+  const r = await send({ cmd: 'approveAnchor', shotId: added.shotId, note: 'identity matches the sheet' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.video.state, 'queued');
+  assert.equal(r.value.video.settings.input, 'ingredients');
+  assert.deepEqual(r.value.video.referencePlan.ingredients, [{ kind: 'mediaId', mediaId: REF_MEDIA }]);
+  assert.equal(r.value.video.anchor.shotId, added.shotId);
+  assert.equal(r.value.video.anchor.startFrameMediaId, STILL_MEDIA);
+  assert.equal(typeof r.value.video.anchor.approvedAt, 'number');
+  assert.equal(r.value.approval.approvedBy, 'dashboard');
+  assert.equal(r.value.approval.note, 'identity matches the sheet');
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0); // nothing clicked, nothing spent
+  const shot = (await send({ cmd: 'shots' })).value.shots.find((s) => s.id === added.shotId);
+  assert.equal(shot.gate.ok, true);
+  assert.equal(shot.videoJob.id, r.value.video.id);
+});
+
+test('a Frames shot is anchored to the approved still as its first frame', async () => {
+  const added = await importOneShot({ scene: 7, entities: ['ShotRudy'], mode: 'frames' });
+  markStillDone(added.stillJobId);
+  const r = await send({ cmd: 'approveAnchor', shotId: added.shotId });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.video.settings.input, 'frames');
+  assert.deepEqual(r.value.video.referencePlan.firstFrame, { kind: 'mediaId', mediaId: STILL_MEDIA });
+  assert.equal(r.value.video.recipe, 'abra_i2v_4s');
+});
+
+test('queueing a new still supersedes the approval, so the old one can never carry forward', async () => {
+  const added = await importOneShot({ scene: 8, entities: ['ShotRudy'], mode: 'ingredients' });
+  markStillDone(added.stillJobId);
+  assert.equal((await send({ cmd: 'approveAnchor', shotId: added.shotId })).ok, true);
+  const requeued = await send({ cmd: 'queueStill', shotId: added.shotId });
+  assert.equal(requeued.ok, true, requeued.error);
+  const shot = (await send({ cmd: 'shots' })).value.shots.find((s) => s.id === added.shotId);
+  assert.equal(shot.gate.ok, false);
+  assert.equal(shot.still.jobId, requeued.value.still.id);
+  assert.match(shot.gate.problems.join(' '), /not approved|new still/i);
+  // The video job created before the re-anchor still exists and is never rewritten.
+  assert.equal(shot.videoJob.id, requeued.value.shot.videoJobId);
+});
+
+test('a shot list with an unknown entity is refused whole, and an agent may approve a still too', async () => {
+  await send({ cmd: 'entityUpsert', entity: { name: 'ShotRudy', kind: 'character', description: 'a heavyset man', approved: true, refs: [{ mediaId: REF_MEDIA, role: 'sheet', label: 'shotrudy_sheet_v1' }] } });
+  const bad = await send({ cmd: 'importShots', rows: [{ scene: 9, entities: ['Ghost'] }] });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /Unknown entity "Ghost"/);
+  assert.equal((await send({ cmd: 'shots' })).value.shots.some((s) => s.scene === 9), false);
+  const good = await send({ cmd: 'importShots', rows: [{ scene: 10, entities: ['ShotRudy'], mode: 'ingredients' }] });
+  markStillDone(good.value.added[0].stillJobId);
+  // An agent (the popup or the helper bridge, not the dashboard) may approve: decision 7 says
+  // approval is an assertion, and the ledger records who did it.
+  const r = await send({ cmd: 'approveAnchor', shotId: good.value.added[0].shotId }, `${EXT}popup/popup.html`);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.approval.approvedBy, 'agent');
+});
+
+test('the shot tests leave the entity library as they found it', async () => {
+  await send({ cmd: 'entityRemove', name: 'ShotRudy' });
+  assert.deepEqual((await send({ cmd: 'entities' })).value.library.entities, []);
+});
+
+test('a hand-written job cannot claim a shot anchor; only approving a still can', async () => {
+  const r = await send({ cmd: 'addJob', spec: { prompt: 'x', firstFrame: REF_MEDIA, anchor: { shotId: 'shot_99', startFrameMediaId: REF_MEDIA } } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /anchor/i);
+});
+
 // ---- Helper bridge ----------------------------------------------------------------------------
 
 const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));

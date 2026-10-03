@@ -257,6 +257,10 @@ function sectionText(section, input, ctx) {
 export function composePrompt(input = {}, library = emptyLibrary(null), template = DEFAULT_TEMPLATE) {
   const entities = resolveEntities(library, input.entities ?? []);
   const styleEntity = (library?.entities ?? []).find((e) => e.id === library.styleId) ?? null;
+  // An entity that carries a Flow Character is text-prefixed by the caller and its description
+  // block is left out: the server already holds the character (report §2.4 consequence 3). The
+  // attach itself is a Phase 3 seam; this only keeps the block out of the prompt.
+  const omit = new Set((input.omitEntityBlocks ?? []).map(String));
 
   const part = (kind, ref, text) => {
     const t = String(text ?? '').trim();
@@ -271,6 +275,7 @@ export function composePrompt(input = {}, library = emptyLibrary(null), template
   for (const section of template?.sections ?? DEFAULT_SECTIONS) {
     if (section === 'entities') {
       for (const e of entities) {
+        if (omit.has(e.id)) continue;
         const block = entityBlock(e);
         parts.push({ kind: 'entity', ref: e.id, sha256: block.sha256, text: block.text });
       }

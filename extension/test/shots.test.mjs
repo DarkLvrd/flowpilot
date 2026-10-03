@@ -1,0 +1,291 @@
+// Shot plans, the still-anchor gate and materialisation (report §2.3, §2.4, §2.5, §2.7, §2.8).
+// Pure logic first: a shot is either anchored (Frames) or referenced (Ingredients), never both;
+// more than three in-frame subjects means the composed still is the merge point; a shot that names
+// a Flow Character is text-prefixed and its description block is left out (the attach itself is a
+// Phase 3 seam and stays unwired). The gate is that no video job can be built from a shot whose
+// still is not approved.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseCatalog } from '../lib/catalog.js';
+import { parseBatchResponse } from '../lib/rpc.js';
+import { loadDefaults } from '../lib/prompt-assets.js';
+import { emptyLibrary } from '../lib/entities.js';
+import { fixture } from './helpers.mjs';
+import {
+  SHOT_ROLES, SHOT_MODES, validateShot, planReferences, stillReferences, shotComposeInput,
+  stillJobSpec, videoJobSpec, materializeShot, stillGate, approveStill, supersedeStill,
+} from '../lib/shots.js';
+
+const recipes = parseCatalog(parseBatchResponse(fixture('HTrJv'), 'HTrJv').data);
+const defaults = await loadDefaults();
+const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
+
+const MEDIA = {
+  rudy: 'aaaaaaaa-0000-4000-8000-000000000001',
+  hellcat: 'bbbbbbbb-0000-4000-8000-000000000002',
+  street: 'cccccccc-0000-4000-8000-000000000003',
+  extra: 'dddddddd-0000-4000-8000-000000000004',
+  extra2: 'eeeeeeee-0000-4000-8000-000000000005',
+  still: 'ffffffff-0000-4000-8000-000000000006',
+  still2: '99999999-0000-4000-8000-000000000007',
+  end: '12121212-0000-4000-8000-000000000008',
+};
+
+const entity = (over = {}) => ({
+  id: 'ent_rudy', kind: 'character', name: 'Rudy', aliases: [], orientation: 'portrait',
+  description: 'a heavyset Black man in his 30s',
+  refs: [{ mediaId: MEDIA.rudy, role: 'sheet', label: 'rudy_sheet_v1' }],
+  primaryRefMediaId: MEDIA.rudy, approvedAt: 1, approvedBy: 'dashboard', version: 1, history: [],
+  ...over,
+});
+
+const library = (entities) => ({ ...emptyLibrary(PID), entities });
+
+// The shot's entities are the frozen records written at import time: identity (name, version,
+// mediaId, approval, flowCharacter) is decided once and never re-read from a library that moved.
+const shotEntity = (over = {}) => ({
+  entityId: 'ent_rudy', role: 'inFrame', name: 'Rudy', version: 1,
+  mediaId: MEDIA.rudy, approvedAt: 1, flowCharacter: null, ...over,
+});
+
+const baseShot = (over = {}) => ({
+  id: 'shot_4', projectId: PID, scene: 4, name: 'scene_4',
+  beat: 'Driving shot heading home in the Hellcat Widebody Red Eye',
+  action: 'The Charger drives along a suburban road, the driver relaxed at the wheel.',
+  motion: 'anticipation+timing-weight', setting: 'a quiet LA suburban street',
+  camera: { shotType: 'wide', moveId: 'tracking-glide' }, audio: 'a deep V8 exhaust note',
+  durationS: 4, resolution: '360p', aspect: '16:9', count: 1,
+  entities: [shotEntity()],
+  mode: 'frames',
+  anchor: { startFrameMediaId: null, endFrameMediaId: null },
+  still: { jobId: null, mediaId: null },
+  prompt: '[SHOT 4 — 4s]',
+  promptParts: [{ kind: 'base', ref: 'shot', sha256: 'a'.repeat(64), text: '[SHOT 4 — 4s]' }],
+  outputPath: null, stillOutputPath: null,
+  ...over,
+});
+
+const approval = (over = {}) => ({
+  shotId: 'shot_4', frame: 'start', mediaId: MEDIA.still, jobId: 'still-job', approvedAt: 100,
+  approvedBy: 'dashboard', note: null, ...over,
+});
+
+// --- validation -----------------------------------------------------------------------------
+
+test('validateShot accepts the design record and refuses the shapes that cannot be planned', () => {
+  assert.equal(validateShot(baseShot()), true);
+  assert.equal(SHOT_MODES.join(','), 'frames,ingredients');
+  assert.equal(SHOT_ROLES.join(','), 'inFrame,context');
+  assert.throws(() => validateShot(baseShot({ id: '' })), /id/i);
+  assert.throws(() => validateShot(baseShot({ mode: 'both' })), /mode/i);
+  assert.throws(() => validateShot(baseShot({ entities: [{ entityId: 'ent_rudy', role: 'hero' }] })), /role/i);
+  assert.throws(() => validateShot(baseShot({ entities: [{ role: 'inFrame' }] })), /entityId/i);
+  assert.throws(() => validateShot(baseShot({ entities: [{ entityId: 'ent_rudy', role: 'inFrame' }, { entityId: 'ent_rudy', role: 'context' }] })), /twice/i);
+  assert.throws(() => validateShot(baseShot({ durationS: 5 })), /duration/i);
+});
+
+test('a role that is not named is in-frame; context entities never reach the reference plan', () => {
+  const shot = baseShot({ entities: [shotEntity({ role: undefined }), shotEntity({ entityId: 'ent_street', name: 'Street', mediaId: MEDIA.street, role: 'context' })], anchor: { startFrameMediaId: MEDIA.still } });
+  const plan = planReferences(shot);
+  assert.deepEqual(plan.ingredients.length, 0); // frames mode never carries ingredients
+  assert.deepEqual(plan.inFrame.map((e) => e.entityId), ['ent_rudy']);
+  assert.deepEqual(plan.context.map((e) => e.entityId), ['ent_street']);
+});
+
+// --- planReferences: anchored or referenced, never both --------------------------------------
+
+test('a frames shot is anchored to its approved still and carries no ingredients', () => {
+  const shot = baseShot({ anchor: { startFrameMediaId: MEDIA.still, endFrameMediaId: null } });
+  const { inFrame, ...plan } = planReferences(shot);
+  assert.deepEqual(plan, {
+    input: 'frames', ingredients: [], firstFrame: MEDIA.still, lastFrame: null,
+    context: [], characters: [], omitEntityBlocks: [],
+  });
+  assert.equal(inFrame.length, 1);
+});
+
+test('a frames shot with a declared end frame plans both frames', () => {
+  const shot = baseShot({ anchor: { startFrameMediaId: MEDIA.still, endFrameMediaId: MEDIA.end } });
+  const plan = planReferences(shot);
+  assert.equal(plan.firstFrame, MEDIA.still);
+  assert.equal(plan.lastFrame, MEDIA.end);
+});
+
+test('an ingredients shot references its in-frame entities and is not pinned to a still', () => {
+  const shot = baseShot({ mode: 'ingredients' });
+  const plan = planReferences(shot);
+  assert.equal(plan.input, 'ingredients');
+  assert.deepEqual(plan.ingredients, [MEDIA.rudy]);
+  assert.equal(plan.firstFrame, null);
+  assert.equal(plan.lastFrame, null);
+});
+
+test('a shot can never be anchored and referenced at once', () => {
+  // An ingredients shot pinned to an anchor still is the import-time mutual exclusion.
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', anchor: { startFrameMediaId: MEDIA.still, endFrameMediaId: null } })), /anchored|Ingredients.*still|both/i);
+  // A frames shot that also lists ingredient references is the same refusal from the other side.
+  assert.throws(() => planReferences(baseShot({ refs: [MEDIA.still] })), /Ingredients|both/i);
+});
+
+test('more than three in-frame subjects refuse Ingredients and name the still as the merge point', () => {
+  const many = ['a', 'b', 'c', 'd'].map((k, i) => shotEntity({ entityId: `ent_${k}`, name: `E${i}`, mediaId: MEDIA.extra, role: 'inFrame' }));
+  const shot = baseShot({ mode: 'ingredients', entities: many });
+  assert.throws(() => planReferences(shot), /3|three/i);
+  assert.throws(() => planReferences(shot), /frames|still/i);
+  // The same four are fine once the shot is anchored: the composed still merges them.
+  assert.equal(planReferences(baseShot({ entities: many, anchor: { startFrameMediaId: MEDIA.still } })).input, 'frames');
+});
+
+test('Ingredients needs at least one in-frame subject', () => {
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ role: 'context' })] })), /in-frame|inFrame|at least one/i);
+});
+
+test('an unapproved entity or one without a locked media id refuses the plan', () => {
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ approvedAt: null })] })), /not approved/i);
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ mediaId: null })] })), /media id|primary ref/i);
+  // A library entry can supply identity the frozen record left out.
+  const lib = library([entity()]);
+  assert.deepEqual(planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ mediaId: null, approvedAt: null })] }), lib).ingredients, [MEDIA.rudy]);
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ entityId: 'ent_ghost' })] }), lib), /unknown|ghost/i);
+});
+
+// --- the Flow Character seam -----------------------------------------------------------------
+
+test('a flowCharacter entity is text-prefixed and its description block is left out', () => {
+  const shot = baseShot({ entities: [shotEntity({ name: 'Rudy', flowCharacter: { name: 'Rudy' } }), shotEntity({ entityId: 'ent_street', name: 'Street', mediaId: MEDIA.street, role: 'context' })], anchor: { startFrameMediaId: MEDIA.still } });
+  const plan = planReferences(shot);
+  assert.deepEqual(plan.characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  assert.deepEqual(plan.omitEntityBlocks, ['ent_rudy']);
+  // The composer input carries the mention as prompt text and the omit list for the composer.
+  const input = shotComposeInput(shot);
+  assert.match(input.prompt, /@Rudy/);
+  assert.deepEqual(input.omitEntityBlocks, ['ent_rudy']);
+  assert.deepEqual(input.entities, ['ent_rudy', 'ent_street']);
+  // Nothing about attaching a Flow Character is wired: the plan only describes the text change.
+  assert.equal('attach' in plan, false);
+});
+
+// --- the still's references and job specs ----------------------------------------------------
+
+test('the still takes up to three in-frame refs, in order, and refuses a missing media id', () => {
+  const ents = ['a', 'b', 'c', 'd'].map((k, i) => shotEntity({ entityId: `ent_${k}`, name: `E${i}`, mediaId: [MEDIA.rudy, MEDIA.hellcat, MEDIA.street, MEDIA.extra][i], role: 'inFrame' }));
+  const refs = stillReferences(baseShot({ entities: ents, mode: 'frames' }));
+  assert.deepEqual(refs, [MEDIA.rudy, MEDIA.hellcat, MEDIA.street]); // the merge point is the first three
+  assert.deepEqual(stillReferences(baseShot({ entities: [shotEntity({ mediaId: null })] })), []);
+  assert.throws(() => stillReferences(baseShot({ entities: [shotEntity({ approvedAt: null })] })), /not approved/i);
+});
+
+test('the still job is a free image built from the composed shot prompt and its refs', () => {
+  const shot = baseShot({ mode: 'ingredients', entities: [shotEntity(), shotEntity({ entityId: 'ent_hellcat', name: 'Hellcat', mediaId: MEDIA.hellcat, kind: 'vehicle' })] });
+  const spec = stillJobSpec(shot, { recipes, template: defaults.template });
+  assert.equal(spec.kind, 'image');
+  assert.equal(spec.name, 'scene_4-still');
+  assert.deepEqual(spec.refs, [MEDIA.rudy, MEDIA.hellcat]);
+  const fields = Object.fromEntries(Object.entries(spec));
+  assert.equal(fields.firstFrame, undefined);
+  assert.equal(shot.stillOutputPath, null);
+  const withPath = stillJobSpec(baseShot({ stillOutputPath: '/tmp/storyboard/scene_4.png' }), { recipes });
+  assert.equal(withPath.outputPath, '/tmp/storyboard/scene_4.png');
+});
+
+test('the video spec is Frames when anchored and Ingredients when referenced', () => {
+  const anchored = baseShot({ anchor: { startFrameMediaId: MEDIA.still } });
+  const frames = videoJobSpec(anchored, planReferences(anchored));
+  assert.equal(frames.kind, 'video');
+  assert.equal(frames.input, 'frames');
+  assert.equal(frames.firstFrame, MEDIA.still);
+  assert.equal(frames.lastFrame, null);
+  assert.deepEqual(frames.entities.map((e) => e.entityId), ['ent_rudy']);
+
+  const referenced = baseShot({ mode: 'ingredients' });
+  const ingredients = videoJobSpec(referenced, planReferences(referenced));
+  assert.equal(ingredients.input, 'ingredients');
+  assert.deepEqual(ingredients.refs, [MEDIA.rudy]);
+  assert.equal(ingredients.firstFrame, undefined);
+});
+
+// --- the gate and the approval ledger --------------------------------------------------------
+
+test('a video job is never built until the shot\'s still is approved', () => {
+  const shot = baseShot();
+  const gate = stillGate(shot, []);
+  assert.equal(gate.ok, false);
+  assert.match(gate.problems.join(' '), /still|approve/i);
+  assert.throws(() => materializeShot(shot, [], { projectId: PID, recipes }), /approve|still/i);
+});
+
+test('approving a still records who, when and which media id, and sets the anchor', () => {
+  const shot = baseShot();
+  const { shot: next, approvals, entry } = approveStill(shot, [], { mediaId: MEDIA.still, jobId: 'still-job', approvedBy: 'dashboard', note: 'looks right', at: 1234 });
+  assert.deepEqual(entry, { shotId: 'shot_4', frame: 'start', mediaId: MEDIA.still, jobId: 'still-job', approvedAt: 1234, approvedBy: 'dashboard', note: 'looks right' });
+  assert.deepEqual(approvals, [entry]);
+  assert.equal(next.anchor.startFrameMediaId, MEDIA.still);
+  assert.equal(next.still.mediaId, MEDIA.still);
+  assert.equal(stillGate(next, approvals).ok, true);
+});
+
+test('an approval for a different shot or a superseded one does not open the gate', () => {
+  const shot = baseShot();
+  assert.equal(stillGate(shot, [approval({ shotId: 'shot_9' })]).ok, false);
+  assert.equal(stillGate(shot, [approval({ supersededAt: 5, supersededReason: 'a new still was queued' })]).ok, false);
+});
+
+test('re-anchoring to a new still makes the old approval stale until the new one is approved', () => {
+  const approved = approveStill(baseShot(), [], { mediaId: MEDIA.still, at: 1 });
+  const regenerated = baseShot({ still: { jobId: 'still-job-2', mediaId: MEDIA.still2 }, anchor: { startFrameMediaId: MEDIA.still } });
+  const gate = stillGate(regenerated, approved.approvals);
+  assert.equal(gate.ok, false);
+  assert.match(gate.problems.join(' '), /new still|replaced/i);
+  const reapproved = approveStill(regenerated, approved.approvals, { mediaId: MEDIA.still2, jobId: 'still-job-2', at: 2 });
+  assert.equal(stillGate(reapproved.shot, reapproved.approvals).ok, true);
+  assert.equal(reapproved.approvals.length, 2); // the ledger keeps the superseded entry
+  assert.equal(reapproved.approvals[0].mediaId, MEDIA.still);
+});
+
+test('a declared end frame must be approved too before the video can be built', () => {
+  const shot = baseShot({ anchor: { startFrameMediaId: MEDIA.still, endFrameMediaId: MEDIA.end } });
+  const start = approveStill(shot, [], { mediaId: MEDIA.still, at: 1 });
+  assert.equal(stillGate(start.shot, start.approvals).ok, false);
+  assert.match(stillGate(start.shot, start.approvals).problems.join(' '), /end frame/i);
+  const end = approveStill(start.shot, start.approvals, { mediaId: MEDIA.end, frame: 'end', at: 2 });
+  assert.equal(stillGate(end.shot, end.approvals).ok, true);
+});
+
+test('queueing a new still supersedes the current approval instead of carrying it forward', () => {
+  const approved = approveStill(baseShot(), [], { mediaId: MEDIA.still, at: 1 });
+  const { approvals } = supersedeStill(approved.shot, approved.approvals, { reason: 'a new still was queued', at: 9 });
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].supersededAt, 9);
+  assert.equal(stillGate(approved.shot, approvals).ok, false);
+});
+
+// --- materialisation -------------------------------------------------------------------------
+
+test('materialiseShot builds the Frames video from the approved still, the entities and the parts', () => {
+  const anchored = baseShot({ anchor: { startFrameMediaId: MEDIA.still } });
+  const { shot, approvals } = approveStill(anchored, [], { mediaId: MEDIA.still, jobId: 'still-job', approvedBy: 'dashboard', at: 42 });
+  const job = materializeShot(shot, approvals, { projectId: PID, recipes });
+  assert.equal(job.kind, undefined);
+  assert.equal(job.settings.kind, 'video');
+  assert.equal(job.settings.input, 'frames');
+  assert.deepEqual(job.referencePlan.firstFrame, { kind: 'mediaId', mediaId: MEDIA.still });
+  assert.equal(job.anchor.shotId, 'shot_4');
+  assert.equal(job.anchor.startFrameMediaId, MEDIA.still);
+  assert.equal(job.anchor.approvedAt, 42);
+  assert.equal(job.recipe, 'abra_i2v_4s_360p');
+  assert.equal(job.expectedCost, 4); // 360p i2v: the cost shown before the click
+  assert.deepEqual(job.entities, [{ entityId: 'ent_rudy', version: 1, mediaId: MEDIA.rudy, role: 'inFrame' }]);
+  assert.deepEqual(job.promptParts, shot.promptParts);
+  assert.equal(job.prompt, shot.prompt);
+});
+
+test('an ingredients shot materialises an Ingredients video once its still is approved', () => {
+  const referenced = baseShot({ mode: 'ingredients' });
+  const { shot, approvals } = approveStill(referenced, [], { mediaId: MEDIA.still, at: 42 });
+  const job = materializeShot(shot, approvals, { projectId: PID, recipes });
+  assert.equal(job.settings.input, 'ingredients');
+  assert.deepEqual(job.referencePlan.ingredients, [{ kind: 'mediaId', mediaId: MEDIA.rudy }]);
+  assert.equal(job.referencePlan.firstFrame, null);
+  assert.equal(job.anchor.startFrameMediaId, MEDIA.still); // the approval is recorded even when unused as a frame
+});
