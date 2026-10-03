@@ -159,6 +159,22 @@ test('a still that the catalog prices above zero still fails the row', () => {
   assert.match(plan.rows[0].error, /still must be free/i);
 });
 
+test('a row\'s prompt or text column is the shot\'s free text, and reaches the composed prompt', () => {
+  const json = planShotImport({ rows: [row({ prompt: 'she waits by the car' })], projectId: PID, library: library(), template, recipes });
+  assert.equal(json.anyError, false, json.rows[0].error ?? '');
+  assert.equal(json.rows[0].shot.text, 'she waits by the car'); // kept as written, beside the composed prompt
+  assert.match(json.rows[0].shot.prompt, /she waits by the car/);
+  assert.match(json.rows[0].stillJob.prompt, /she waits by the car/); // the queue's Preview prompt shows this
+  assert.equal(json.rows[0].stillJob.prompt, json.rows[0].shot.prompt);
+  assert.equal(json.rows[0].stillJob.promptParts[0].text, 'she waits by the car');
+
+  // The CSV spelling `text` means the same thing, and the free text is written before the sections.
+  const csv = planShotImport({ text: 'scene,name,text,mode,entities\n7,scene_7,he turns to camera,ingredients,Rudy', filename: 'shots.csv', projectId: PID, library: library(), template, recipes });
+  assert.equal(csv.anyError, false, csv.rows[0].error ?? '');
+  assert.equal(csv.rows[0].shot.text, 'he turns to camera');
+  assert.match(csv.rows[0].shot.prompt, /^he turns to camera\n\n\[SHOT 7/);
+});
+
 test('a declared anchor may be a media id or a finished still job\'s output path, never a stray path', () => {
   const plan = planShotImport({
     rows: [row({ mode: 'frames', anchor: { startFrame: MEDIA.still, endFrame: null } })],

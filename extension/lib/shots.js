@@ -196,12 +196,14 @@ export function stillReferences(shot, library = null) {
 // ---- prompt and job specs -------------------------------------------------------------------
 
 // The composePrompt input for a shot: the base sections plus one block per subject, with a
-// flowCharacter entity's description block left out and its `@Name` mention written first.
+// flowCharacter entity's description block left out and its `@Name` mention written first. The free
+// text is the shot's own `text` (the row's `prompt`/`text` column, kept as written); a hand-made
+// shot that predates that field still composes from its `prompt`.
 export function shotComposeInput(shot, library = null) {
   validateShot(shot);
   const { characters, omitEntityBlocks } = characterMentions(shot, library);
   return {
-    prompt: [characters.map((c) => c.mention).join(' '), shot.prompt].filter(Boolean).join('\n'),
+    prompt: [characters.map((c) => c.mention).join(' '), shot.text ?? shot.prompt].filter(Boolean).join('\n'),
     scene: shot.scene, durationS: shot.durationS,
     beat: shot.beat, action: shot.action, motion: shot.motion, setting: shot.setting,
     camera: shot.camera, audio: shot.audio,
@@ -344,6 +346,10 @@ export function materializeShot(shot, approvals, { projectId, recipes = null, te
 const KEY_ALIASES = {
   scene: 'scene', shot: 'scene', shotnumber: 'scene',
   name: 'name', job: 'name', title: 'name',
+  // The shot's free text. `prompt` is what the storyboard reader calls it and `text` is the plain
+  // spelling people reach for; both land on the shot's `text` field (its `prompt` becomes the
+  // composed text). Silently dropping either was the bug: the row's own words vanished.
+  prompt: 'prompt', text: 'prompt',
   beat: 'beat', action: 'action',
   motion: 'motion', motionid: 'motion',
   setting: 'setting', audio: 'audio',
@@ -464,6 +470,9 @@ export function planShotImport({ text, filename = '', rows: given = null, projec
       const startFrame = anchorFrom(row.anchor?.startFrame, row, knownStill);
       const shot = {
         id, projectId, scene: row.scene ?? index, name: row.name ?? `shot_${row.scene ?? index}`,
+        // The row's free text, kept as written: `prompt` below is overwritten with the composed
+        // text, so the person's own words live on `text` (and are what a later re-compose starts from).
+        text: row.prompt ?? null,
         beat: row.beat ?? null, action: row.action ?? null, motion: row.motion ?? null,
         setting: row.setting ?? null, camera: row.camera ?? null, audio: row.audio ?? null,
         durationS: row.durationS ?? template?.durationS ?? 4,

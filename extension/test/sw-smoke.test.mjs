@@ -363,6 +363,21 @@ test('importing a shot list without the catalog plans it and warns, instead of a
   }
 });
 
+test('a shot row\'s free-text column reaches the still job, so the prompt preview shows it', async () => {
+  await send({ cmd: 'entityUpsert', entity: { name: 'ShotText', kind: 'character', description: 'a heavyset man', approved: true, refs: [{ mediaId: REF_MEDIA, role: 'sheet', label: 'shottext_sheet_v1' }] } });
+  try {
+    const r = await send({ cmd: 'importShots', rows: [{ scene: 21, prompt: 'she waits by the car', entities: ['ShotText'], mode: 'ingredients' }] });
+    assert.equal(r.ok, true, r.error);
+    const still = (await send({ cmd: 'status' })).value.jobs.find((j) => j.id === r.value.added[0].stillJobId);
+    assert.match(still.prompt, /^she waits by the car\n\n/); // what "Preview prompt" renders for the queued still
+    const shot = (await send({ cmd: 'shots' })).value.shots.find((s) => s.id === r.value.added[0].shotId);
+    assert.equal(shot.text, 'she waits by the car'); // the row's own words, kept beside the composed prompt
+    assert.equal(still.prompt, shot.prompt);
+  } finally {
+    await send({ cmd: 'entityRemove', name: 'ShotText' });
+  }
+});
+
 test('the gate: a shot with no finished still cannot create a video job', async () => {
   const added = await importOneShot({ scene: 5, entities: ['ShotRudy'], mode: 'ingredients' });
   const r = await send({ cmd: 'approveAnchor', shotId: added.shotId });
