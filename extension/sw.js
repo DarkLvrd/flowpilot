@@ -338,18 +338,29 @@ async function addJob(spec, { recipes, projectId } = {}) {
 // composed into its prompt, byte-verbatim (report §2.2). A job that names none is returned untouched,
 // so every existing path stays byte-for-byte what it was. Unknown, ambiguous or unapproved entities
 // throw here: nothing is queued and no credits can be priced around a subject nobody approved.
+//
+// An entity that IS a linked Flow Character also becomes `characters`: the composed prompt names it,
+// so the composer must attach it through Flow's own picker and the pre-spend check must confirm it
+// by Flow's entity id (report §8.1). Without this the block was composed and sent while the
+// character was dropped (BUG-2/4); a mode that cannot carry one (Frames) is refused by buildJob
+// rather than quietly spending on a clip without the subject.
 async function withComposedEntities(spec, projectId) {
   const names = Array.isArray(spec.entities) ? spec.entities : (spec.entities ? [spec.entities] : []);
   if (!names.length) return spec;
   const [library, template] = await Promise.all([entityStore.library(projectId), templateStore.get(projectId)]);
   const resolved = resolveEntities(library, names);
   const composed = compose({ prompt: spec.prompt, entities: names, audio: spec.audio }, library, template);
+  // Flow's own entity id, never the library id: that is what its picker attaches and what its own
+  // record echoes back. `entityStore` validates a link's id and name when it is written.
+  const linked = resolved.filter((e) => e.flowCharacter).map((e) => ({ entityId: e.flowCharacter.entityId, name: e.flowCharacter.name }));
+  const characters = dedupeCharacters([...(spec.characters ?? []), ...linked]);
   return {
     ...spec,
     prompt: composed.text,
     promptParts: composed.parts,
     // Frozen at add time: the job records the version of each subject it was composed with.
     entities: resolved.map((e) => ({ entityId: e.id, version: e.version, mediaId: e.primaryRefMediaId, role: 'inFrame' })),
+    ...(characters.length ? { characters } : {}),
   };
 }
 
@@ -403,19 +414,27 @@ async function addPreviewJob(spec) {
   if (!tab) throw new Error('Pick a work tab first');
   const projectId = spec.projectId ?? tab.projectId;
   const recipes = await catalogRecipes();
-  const name = safeName(spec.name ?? `job-${Date.now()}`);
+  // An entity named here is composed (and a linked Flow Character carried) exactly as addJob does
+  // it: a preview that quietly dropped a subject would queue a free still of somebody else.
+  const composed = await withComposedEntities(spec, projectId);
+  const name = safeName(composed.name ?? `job-${Date.now()}`);
 
   // The still is the same scene at the same framing, built as an ordinary image job.
   const stillJob = buildJob(
-    { name: `${name}-still`, prompt: spec.prompt, kind: 'image', resolution: spec.resolution, durationS: spec.durationS, aspect: spec.aspect, count: spec.count },
+    {
+      name: `${name}-still`, prompt: composed.prompt, kind: 'image', resolution: composed.resolution, durationS: composed.durationS,
+      aspect: composed.aspect, count: composed.count, entities: composed.entities, promptParts: composed.promptParts,
+      ...(composed.characters?.length ? { characters: composed.characters } : {}),
+    },
     { projectId, recipes },
   );
   // A preview must be free: refuse to create one whose still would cost credits (an unknown cost
-  // fails close here too), so the "free preview" step can never spend.
+  // fails closed here too), so the "free preview" step can never spend.
   assertFreePreview(stillJob.expectedCost, stillJob.recipe);
 
-  // The held video: Frames, with the still as its first frame once the person approves it.
-  const videoJob = buildJob({ ...spec, name, kind: 'video' }, { projectId, recipes, holdFirstFrame: true });
+  // The held video: Frames, with the still as its first frame once the person approves it. Frames
+  // takes no character chip, so a held character video is refused by buildJob instead of dropping it.
+  const videoJob = buildJob({ ...composed, name, kind: 'video' }, { projectId, recipes, holdFirstFrame: true });
 
   const still = await store.add({ ...stillJob, role: 'preview' });
   const video = await store.add({ ...videoJob, role: 'video', previewJobId: still.id, initialState: 'awaiting-preview' });

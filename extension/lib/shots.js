@@ -75,14 +75,23 @@ export function validateShot(shot) {
 
 // `{ characters: [{ entityId, name, mention }], omitEntityBlocks: [entityId] }`. Pure; the mention
 // is text only, and the attach (Flow's own Character picker) is deliberately not wired.
+//
+// The id here is Flow's own entity id (`flowCharacter.entityId`), never the library id: Flow's
+// picker attaches by it, `lib/refs.js` classifyCharacter requires a uuid Flow echoes back after a
+// generation, and a job that carried the library id could never be submitted (BUG-2). The prompt
+// blocks live under the *library* id, so `omitEntityBlocks` keeps that one — they are two different
+// identifiers for the same subject and this is the one place both are in hand.
 export function characterMentions(shot, library = null) {
   const characters = [];
+  const omitEntityBlocks = [];
   for (const ref of shot?.entities ?? []) {
     const e = resolveShotEntity(shot, ref, entitiesOf(library));
-    const name = e.flowCharacter?.name;
-    if (name) characters.push({ entityId: e.entityId, name: e.name, mention: `@${name}` });
+    const character = e.flowCharacter;
+    if (!character?.name) continue;
+    characters.push({ entityId: character.entityId, name: character.name, mention: `@${character.name}` });
+    omitEntityBlocks.push(e.entityId);
   }
-  return { characters, omitEntityBlocks: characters.map((c) => c.entityId) };
+  return { characters, omitEntityBlocks };
 }
 
 // One frozen shot record + the library (when it is still there) → the entity the plan works from.

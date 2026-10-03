@@ -169,7 +169,10 @@ const CHARACTER = { name: 'Rudy', entityId: '0bfec740-409e-42f5-80d1-82baac3349f
 test('a flowCharacter entity is text-prefixed and its description block is left out', () => {
   const shot = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', flowCharacter: CHARACTER }), shotEntity({ entityId: 'ent_street', name: 'Street', mediaId: MEDIA.street, role: 'context' })] });
   const plan = planReferences(shot);
-  assert.deepEqual(plan.characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  // The id a job carries is Flow's own entity id, never the library id: `classifyCharacter` needs a
+  // uuid Flow echoes back after a generation, and the picker attaches by Flow's id (BUG-2).
+  assert.deepEqual(plan.characters, [{ entityId: CHARACTER.entityId, name: 'Rudy', mention: '@Rudy' }]);
+  // The prompt blocks are keyed by the *library* id, so the omit list keeps that one.
   assert.deepEqual(plan.omitEntityBlocks, ['ent_rudy']);
   // The composer input carries the mention as prompt text and the omit list for the composer.
   const input = shotComposeInput(shot);
@@ -178,18 +181,41 @@ test('a flowCharacter entity is text-prefixed and its description block is left 
   assert.deepEqual(input.entities, ['ent_rudy', 'ent_street']);
   // The attach is the picker's job, not the plan's: the plan describes the id Flow must confirm.
   assert.equal('attach' in plan, false);
-  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: 'ent_rudy', name: 'Rudy' }]);
+  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: CHARACTER.entityId, name: 'Rudy' }]);
+  // The character's own name is the one Flow's picker tile and chip show, so it is what the driver
+  // matches the tile by — even when the library entity goes under a different label.
+  const renamed = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy the character', flowCharacter: CHARACTER })] });
+  assert.deepEqual(planReferences(renamed).characters, [{ entityId: CHARACTER.entityId, name: 'Rudy', mention: '@Rudy' }]);
 });
 
 test('a flowCharacter entity needs no locked media id: Flow holds the face', () => {
   const shot = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', mediaId: null, flowCharacter: CHARACTER })] });
   const plan = planReferences(shot);
   assert.deepEqual(plan.ingredients, []); // no photo to attach: the character chip is the reference
-  assert.deepEqual(plan.characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  assert.deepEqual(plan.characters, [{ entityId: CHARACTER.entityId, name: 'Rudy', mention: '@Rudy' }]);
   assert.deepEqual(videoJobSpec(shot, plan).refs, []);
-  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: 'ent_rudy', name: 'Rudy' }]);
+  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: CHARACTER.entityId, name: 'Rudy' }]);
   // The approval rule does not move: an unapproved character is still refused.
   assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', mediaId: null, approvedAt: null, flowCharacter: CHARACTER })] })), /not approved/i);
+});
+
+// The plan is not where a character job is validated: `buildJob` (the one path every job takes) is.
+// The library id used to travel as far as here, and only `classifyCharacter` refused it — so the
+// shot→video path could never be built. This runs a character shot through the real builder.
+test('a character shot builds a real job through buildJob, carrying Flow\'s entity id', () => {
+  const shot = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', mediaId: null, flowCharacter: CHARACTER })], anchor: { startFrameMediaId: null, endFrameMediaId: null } });
+  const approvals = [{ shotId: shot.id, frame: 'start', mediaId: MEDIA.still, approvedAt: 7, approvedBy: 'dashboard', note: null }];
+  // An Ingredients shot is not pinned by its still, but its still still has to be approved first.
+  const shotWithStill = { ...shot, still: { jobId: 'j', mediaId: MEDIA.still } };
+  const job = materializeShot(shotWithStill, approvals, { projectId: PID, recipes });
+  assert.equal(job.settings.kind, 'video');
+  assert.equal(job.settings.input, 'ingredients');
+  assert.deepEqual(job.referencePlan.characters, [{ entityId: CHARACTER.entityId, name: 'Rudy' }]);
+  assert.deepEqual(job.settings.characters, [{ entityId: CHARACTER.entityId, name: 'Rudy' }]);
+  // A Flow Character is a reference for the recipe (r2v), so the price is the reference recipe's.
+  assert.match(job.recipe, /r2v/);
+  // And the library id in the same place fails closed: Flow's own id is the only usable one.
+  assert.throws(() => materializeShot({ ...shotWithStill, entities: [shotEntity({ name: 'Rudy', mediaId: null, flowCharacter: { ...CHARACTER, entityId: 'ent_rudy' } })] }, approvals, { projectId: PID, recipes }), /entity id/i);
 });
 
 // Flow replaces the ingredient bar with the start/end slots in Frames (report §6), so there is no
@@ -197,7 +223,7 @@ test('a flowCharacter entity needs no locked media id: Flow holds the face', () 
 // mention, but no job is built: refused before anything is queued.
 test('a Frames shot with a Flow Character is refused before a job is built', () => {
   const shot = baseShot({ entities: [shotEntity({ name: 'Rudy', flowCharacter: CHARACTER })], anchor: { startFrameMediaId: MEDIA.still } });
-  assert.deepEqual(planReferences(shot).characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  assert.deepEqual(planReferences(shot).characters, [{ entityId: CHARACTER.entityId, name: 'Rudy', mention: '@Rudy' }]);
   assert.throws(() => videoJobSpec(shot, planReferences(shot)), /Frames/i);
   assert.throws(() => estimateShotCredits(shot, { recipes, library: library([entity({ flowCharacter: CHARACTER })]), projectId: PID }), /Frames/i);
 });

@@ -23,6 +23,8 @@ const USAGE = `Usage: flowpilot <command>
                                 image path (repeat --ref for several); face-matched character work
       [--first-frame REF]       Frames: the start photo (media id or absolute image path)
       [--last-frame REF]        Frames: the end photo; the video is generated in between
+      [--entity NAME ...]       An approved library entity to compose into the prompt; one that is a
+                                linked Flow Character is attached through Flow's own picker
   approve|cancel|requeue|retry-download <id>
 
   entity add --project P --kind character --name Rudy --desc-file block.txt
@@ -128,6 +130,10 @@ export async function main(argv, { env = process.env, out = console.log, err = c
           name: o.name, prompt: o.prompt, kind: o.kind, resolution: o.resolution,
           durationS: o.duration && Number(o.duration), aspect: o.aspect, count: o.count && Number(o.count),
           projectId: o.project, outputPath: o.out,
+          // The library entities this job composes (and whose Flow Characters it attaches); the
+          // extension resolves the names and carries the entity ids. Dropping it here queued a job
+          // that named a subject and never used it (BUG-4).
+          entities: o.entity,
           refs: o.ref, firstFrame: o['first-frame'], lastFrame: o['last-frame'],
         }).filter(([, v]) => v !== undefined));
         print(await client().add(spec), (j) => `Added ${j.id} (${j.state}, ${j.expectedCost ?? '?'} credits). Approve it with \`flowpilot approve ${j.id}\`.`);

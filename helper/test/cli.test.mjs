@@ -117,6 +117,19 @@ test('add forwards Ingredients (--ref, repeatable) and Frames (--first-frame/--l
   await w.close();
 });
 
+// README documents `--entity` on `add`; it used to be parsed and then dropped from the spec, so a
+// linked Flow Character never reached the job (BUG-4). The extension resolves the name and carries
+// the character itself, so the CLI only has to forward it.
+test('add forwards --entity (the library entity a job composes and attaches)', async () => {
+  const w = await world();
+  await w.run('pair', w.keyring.newCode().code);
+  await w.run('add', '--prompt', 'she waits by the car', '--entity', 'nancy', '--resolution', '360p', '--duration', '4', '--json');
+  assert.deepEqual(w.calls.at(-1), ['addJob', { spec: { prompt: 'she waits by the car', resolution: '360p', durationS: 4, entities: ['nancy'] } }]);
+  await w.run('add', '--prompt', 'two subjects', '--entity', 'nancy', '--entity', 'Hellcat', '--json');
+  assert.deepEqual(w.calls.at(-1), ['addJob', { spec: { prompt: 'two subjects', entities: ['nancy', 'Hellcat'] } }]);
+  await w.close();
+});
+
 test('errors are short and the exit code is non-zero', async () => {
   const w = await world({ extension: false });
   await w.run('pair', w.keyring.newCode().code);

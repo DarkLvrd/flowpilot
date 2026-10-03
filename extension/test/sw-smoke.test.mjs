@@ -251,6 +251,70 @@ test('the Flow tab can be brought forward on a person’s click, and the status 
   assert.equal(s.waitingFor.count, s.counts.approved);
 });
 
+// ---- A linked Flow Character becomes a job (BUG-2/4) ----------------------------------------
+
+// The Flow Character the live account holds (recon/FINDINGS.md, project de7baa89…): the id Flow
+// gave it, which is the only id its picker and its generation record know.
+const FLOW_CHAR = { name: 'nancy', entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', primaryMediaId: 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca' };
+
+// An approved library entity that IS a Flow Character, added the way the MCP/CLI path does it.
+const linkCharacter = async () => {
+  const r = await send({ cmd: 'entityUpsert', entity: { name: 'LinkedNancy', kind: 'character', description: 'CHARACTER — NANCY (identical in every shot)', approved: true, flowCharacter: FLOW_CHAR } });
+  assert.equal(r.ok, true, r.error);
+};
+
+// `flowpilot add --entity nancy` names a library entity; the composed block used to be sent with the
+// character dropped, so no documented path turned a linked character into a job.
+test('a job that names a linked Flow Character carries Flow\'s entity id, and the picker attaches it', async () => {
+  await linkCharacter();
+  const r = await send({ cmd: 'addJob', spec: { name: 'nancy-rooftop', prompt: 'she waits by the car', kind: 'video', resolution: '360p', durationS: 4, entities: ['LinkedNancy'] } });
+  assert.equal(r.ok, true, r.error);
+  // Flow's own entity id, never the library id (`ent_…`): classifyCharacter refuses anything else.
+  assert.deepEqual(r.value.settings.characters, [{ entityId: FLOW_CHAR.entityId, name: 'nancy' }]);
+  assert.deepEqual(r.value.referencePlan.characters, [{ entityId: FLOW_CHAR.entityId, name: 'nancy' }]);
+  // A character rides in the Ingredients bar, so the job is an Ingredients one even with no photo.
+  assert.equal(r.value.settings.input, 'ingredients');
+  assert.match(r.value.recipe, /r2v/);
+  assert.equal(r.value.expectedCost, 4); // priced as a reference job, shown before any click
+  // The composed block is still composed: the same job, one prompt, both facts.
+  assert.match(r.value.prompt, /CHARACTER — NANCY/);
+  assert.deepEqual(r.value.entities.map((e) => e.entityId.startsWith('ent_')), [true]); // the library id, for the record
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+});
+
+test('naming an entity that is not a Flow Character changes nothing about characters', async () => {
+  await send({ cmd: 'entityUpsert', entity: { name: 'PlainRudy', kind: 'character', description: 'a heavyset man in his 30s', approved: true, refs: [{ mediaId: REF_MEDIA, role: 'sheet', label: 'plainrudy_sheet_v1' }] } });
+  const r = await send({ cmd: 'addJob', spec: { name: 'plain', prompt: 'he waits', kind: 'video', resolution: '360p', durationS: 4, entities: ['PlainRudy'] } });
+  assert.equal(r.ok, true, r.error);
+  // Its block is composed (that is what naming an entity is for) and no character is invented.
+  assert.match(r.value.prompt, /heavyset man in his 30s/);
+  assert.equal('characters' in r.value.settings, false);
+  assert.equal('characters' in r.value.referencePlan, false);
+  // The entity's locked reference photos are not silently turned into Ingredients either: only a
+  // shot plan or an explicit `refs` puts a photo in the composer.
+  assert.deepEqual(r.value.referencePlan.ingredients, []);
+  assert.equal(r.value.referencePlan.input, 'text');
+});
+
+// A link that cannot be carried must fail loudly: Frames has no character chip, so attaching it
+// could never be verified and the clip would be paid for without the subject.
+test('a linked Flow Character in a Frames job is refused, never silently dropped', async () => {
+  const r = await send({ cmd: 'addJob', spec: { name: 'framed', prompt: 'she turns', kind: 'video', resolution: '360p', durationS: 4, firstFrame: REF_MEDIA, entities: ['LinkedNancy'] } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Frames/i);
+  assert.match(r.error, /nancy/i);
+  // And the still preview, which runs in Frames, is refused for the same reason.
+  const p = await send({ cmd: 'previewJob', spec: { name: 'held', prompt: 'p', entities: ['LinkedNancy'] } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /Frames|Character/i);
+});
+
+test('the linked-character tests leave the entity library as they found it', async () => {
+  await send({ cmd: 'entityRemove', name: 'LinkedNancy' });
+  await send({ cmd: 'entityRemove', name: 'PlainRudy' });
+  assert.deepEqual((await send({ cmd: 'entities' })).value.library.entities, []);
+});
+
 // ---- Shots and the still→anchor gate (report §2.3-§2.5, Phase 2) ------------------------------
 
 const REF_MEDIA = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
