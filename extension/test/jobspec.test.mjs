@@ -83,6 +83,12 @@ test('the job name is sanitized and falls back to a stable default', () => {
   assert.equal(build({ name: '   ' }).name, 'untitled');
 });
 
+test('a non-numeric duration on a video row is refused with its value, not NaN', () => {
+  assert.throws(() => build({ durationS: 'abc' }), /Unsupported duration: "abc"/);
+  // An image job ignores duration, so it still builds.
+  assert.equal(build({ kind: 'image', durationS: 'abc' }).settings.kind, 'image');
+});
+
 test('a name template produces the relative output path, with {project} and {scene}', () => {
   const job = build({ name: 'opening shot', scene: 'opening shot' }, { template: '{project}/{scene}-{index}', index: 3, total: 10 });
   assert.equal(job.relativePath, `${PID}/opening shot-03`); // padded so a 10-row batch sorts

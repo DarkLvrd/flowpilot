@@ -34,13 +34,15 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
     ? validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame })
     : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null };
 
+  const durationS = Number(spec.durationS ?? 4);
+  if (kind === 'video' && !Number.isFinite(durationS)) throw new Error(`Unsupported duration: ${JSON.stringify(spec.durationS)}; Flow offers 4, 6, 8 or 10 s`);
   const settings = {
     kind,
     // Flow has no "text" radio: text and Ingredients both use the Ingredients tab (an empty
     // ingredients list is plain text-to-video); only Frames uses the Frames tab.
     input: referencePlan.input === 'frames' ? 'frames' : 'ingredients',
     resolution: spec.resolution ?? '720p',
-    durationS: Number(spec.durationS ?? 4),
+    durationS,
     aspect: spec.aspect ?? '16:9',
     count: Number(spec.count ?? 1),
     model: spec.model,
