@@ -180,6 +180,13 @@ test('the base hash is stable and survives an appended consistency block', () =>
   assert.equal(promptBaseHash(plain), base); // still sections 1-10 only
   assert.equal(plain.at(-1).ref, 'consistency');
   assert.equal(plain.at(-1).text, 'a plain string block');
+  // A second fix appends to the first: the base hash and every base part stay byte-identical, and
+  // both blocks stay in order, so a job's whole fix history is auditable from the parts alone.
+  const twice = appendConsistencyBlock(next, { id: 'second_fix', text: 'the location stays the quiet street' });
+  assert.equal(promptBaseHash(twice), base);
+  assert.deepEqual(twice.slice(0, parts.length), parts);
+  assert.deepEqual(twice.slice(parts.length).map((p) => p.ref), ['car_two_tone', 'second_fix']);
+  assert.deepEqual(next.map((p) => p.sha256), twice.slice(0, next.length).map((p) => p.sha256));
 });
 
 test('a ref is superseded as a new version, never by replacing it in place', () => {
