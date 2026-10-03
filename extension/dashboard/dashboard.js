@@ -2,6 +2,7 @@
 // preview-first, the front-tab rule and the Flow health screen.
 import { send, renderChecks, frontTabNotice } from '../ui.js';
 import { FLOW_CHANGED_HINT } from '../lib/health.js';
+import { describePlannedJob } from '../lib/storyboard.js';
 import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.js';
 import { applyNameTemplate } from '../lib/naming.js';
 import { createEntitiesPanel, entityNames } from './entities.js';
@@ -213,7 +214,7 @@ function renderPreview(p) {
     cell(String(r.index));
     cell(r.scene ?? '');
     cell(r.spec?.prompt ?? '');
-    cell(r.ok ? describe(r.spec) : '');
+    cell(r.ok ? describePlannedJob(r.job) : '');
     cell(r.cost == null ? (r.ok ? 'priced at click' : '') : `~${r.cost}`);
     cell(r.error ?? '');
     return tr;
@@ -230,10 +231,6 @@ function renderPreview(p) {
   $('importSummary').textContent = bad ? `${summary} · ${bad} row(s) need fixing before the import can run` : summary;
   $('import').disabled = bad > 0 || p.rows.length === 0;
 }
-
-const describe = (spec) => spec?.kind === 'video'
-  ? `video ${spec.resolution} ${spec.durationS}s ${spec.aspect} x${spec.count}`
-  : `${spec?.kind ?? 'video'}`;
 
 async function loadFile(file) {
   if (!file) return;

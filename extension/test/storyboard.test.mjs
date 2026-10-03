@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
 import { parseCatalog } from '../lib/catalog.js';
-import { detectFormat, parseStoryboard, parseCsv, parseRows, planImport } from '../lib/storyboard.js';
+import { detectFormat, parseStoryboard, parseCsv, parseRows, planImport, describePlannedJob } from '../lib/storyboard.js';
 import { defaultPreset, normalizePreset } from '../lib/presets.js';
 import { fixture } from './helpers.mjs';
 
@@ -97,6 +97,16 @@ test('a JSON batch plans every row through the real job model with a cost each',
   assert.equal(p.rows[1].cost, 8);
   assert.equal(p.totalCost, 12);
   assert.equal(p.anyError, false);
+});
+
+test('the preview describes the built job, so a defaulted aspect is the one it will really get', () => {
+  const p = plan('scene,prompt,kind,resolution,duration\nopening,a red fox,video,360p,4\n');
+  assert.equal(p.rows[0].spec.aspect, undefined); // the row left it out
+  assert.equal(p.rows[0].job.settings.aspect, '16:9'); // the built job filled it in
+  assert.equal(describePlannedJob(p.rows[0].job), 'video 360p 4s 16:9 x1');
+  const image = plan('[{"scene":"still","prompt":"a fox","kind":"image","resolution":"1080p"}]');
+  assert.equal(describePlannedJob(image.rows[0].job), 'image');
+  assert.equal(describePlannedJob(null), '');
 });
 
 test('a CSV batch plans rows and applies the naming template with a zero-padded index', () => {

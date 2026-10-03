@@ -191,3 +191,14 @@ export function planImport({ text, filename = '', projectId, recipes = null, tem
     anyError: rows.some((r) => !r.ok),
   };
 }
+
+// The import preview's Settings column. It describes the *built job* — every default already filled
+// in — never the raw row, so a row that left `aspect` out shows the 16:9 the job will really get
+// instead of `undefined` (report §3, §10 #10). `job` is null for a row that failed to build.
+export function describePlannedJob(job) {
+  const s = job?.settings;
+  if (!s) return '';
+  return s.kind === 'video'
+    ? `video ${s.resolution} ${s.durationS}s ${s.aspect} x${s.count}`
+    : `${s.kind}`;
+}
