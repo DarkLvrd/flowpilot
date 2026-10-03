@@ -1,6 +1,7 @@
 body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; color: #202124; }
 body.popup { width: 320px; }
 h1 { font-size: 16px; margin: 0 0 8px; }
+h2 { font-size: 13px; margin: 12px 0 4px; }
 ul { padding-left: 0; list-style: none; }
 button { display: block; width: 100%; margin: 6px 0; padding: 6px; }
 table { border-collapse: collapse; width: 100%; }

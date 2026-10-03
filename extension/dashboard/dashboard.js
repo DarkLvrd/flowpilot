@@ -1,5 +1,7 @@
-// Dashboard: cap, halt, agents, storyboard/batch import, presets, the folder picker, and the queue.
-import { send, renderChecks } from '../ui.js';
+// Dashboard: cap, halt, agents, storyboard/batch import, presets, the folder picker, the queue,
+// the front-tab rule and the Flow health screen.
+import { send, renderChecks, frontTabNotice } from '../ui.js';
+import { FLOW_CHANGED_HINT } from '../lib/health.js';
 import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.js';
 import { applyNameTemplate } from '../lib/naming.js';
 
@@ -13,6 +15,12 @@ let preview = null; // the last previewImport result
 let presets = []; // the saved presets, for the select and Load
 let grantedFolderName = null; // the name of the folder granted for this session, if any
 
+// A job that is not finished: with no work tab, these are the jobs a person is waiting on.
+const ACTIVE_STATES = ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading', 'awaiting-preview'];
+
+const stateText = (j) => j.state + (j.error ? ` — ${j.error}` : '') + (j.file ? ` → ${j.file.path}` : '');
+const costText = (j) => j.cost ?? (j.expectedCost == null ? '?' : `~${j.expectedCost}`);
+
 async function render() {
   const s = await send('status');
   $('halt').hidden = !s.session.halted;
@@ -23,16 +31,20 @@ async function render() {
     + (s.lastTick?.waiting ? ` · ⏳ ${s.lastTick.waiting}` : '');
   if (s.session.cap !== shownCap) { shownCap = s.session.cap; $('cap').value = s.session.cap ?? ''; }
   renderChecks($('checks'), s.selfCheck);
+  $('healthHint').textContent = FLOW_CHANGED_HINT;
   $('helper').textContent = s.helper?.connected
     ? '✅ Helper running: agents can use Flow Pilot.'
     : '⚪ Helper not running (only needed for agents): start it with `npx flowpilot serve`.';
   $('pair').disabled = !s.helper?.connected;
 
-  // A batch cannot run without a work tab; say that plainly instead of failing silently.
-  const active = s.jobs.some((j) => ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading'].includes(j.state));
-  $('waiting').textContent = s.workTab
-    ? (s.lastTick?.waiting ? `⏳ ${s.lastTick.waiting}` : '')
-    : (active ? 'Pick a work tab in the popup before a batch can run.' : '');
+  // The front-tab gate, in plain words and with the count, plus the button that clears it. Flow only
+  // re-renders in the front tab (LESSONS #23), so approved jobs wait there. A batch cannot run
+  // without a work tab; say that plainly instead of failing silently.
+  const active = s.jobs.some((j) => ACTIVE_STATES.includes(j.state));
+  const waiting = frontTabNotice(s.waitingFor)
+    ?? (s.workTab ? (s.lastTick?.waiting ?? null) : (active ? 'No work tab: open a Flow project and press "Use this tab" in the popup.' : null));
+  $('waiting').textContent = waiting ? `⏳ ${waiting}` : '';
+  $('focusTab').hidden = s.waitingFor?.reason !== 'front-tab';
 
   presets = await send('listPresets').catch(() => []);
   renderPresets(presets);
@@ -42,11 +54,14 @@ async function render() {
     const tr = document.createElement('tr');
     const cell = (t) => { const td = document.createElement('td'); td.textContent = t; tr.append(td); return td; };
     cell(j.name);
-    cell(j.state + (j.error ? ` — ${j.error}` : '') + (j.file ? ` → ${j.file.path}` : ''));
-    cell(j.cost ?? (j.expectedCost == null ? '?' : `~${j.expectedCost}`));
+    cell(stateText(j));
+    cell(costText(j));
     cell(j.prompt);
     const actions = cell('');
-    const btn = (label, cmd) => { const b = document.createElement('button'); b.className = 'inline'; b.textContent = label; b.onclick = act(() => send(cmd, { id: j.id })); actions.append(b); };
+    const btn = (label, cmd, enabled = true) => {
+      const b = document.createElement('button'); b.className = 'inline'; b.textContent = label; b.disabled = !enabled;
+      b.onclick = act(() => send(cmd, { id: j.id })); actions.append(b);
+    };
     if (j.state === 'queued') btn('Approve', 'approve');
     if (['queued', 'approved', 'halted'].includes(j.state)) btn('Cancel', 'cancel');
     if (j.state === 'failed' && j.clickedAt == null && !j.mayHaveSubmitted) btn('Re-queue', 'requeue');
@@ -188,6 +203,10 @@ $('setCap').onclick = act(async () => {
   await send('setCap', { cap: Number($('cap').value) });
 });
 $('clearHalt').onclick = act(() => send('clearHalt'));
+// The person's own click: bring the Flow tab forward so the queue can submit (Flow only renders in
+// the front tab). The extension never does this on its own.
+$('focusTab').onclick = act(() => send('focusWorkTab'));
+$('prompts').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('promptset/index.html') });
 $('pair').onclick = act(async () => {
   const { code, expiresAt } = await send('pairCode');
   const until = new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

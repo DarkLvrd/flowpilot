@@ -3,9 +3,17 @@
 <link rel="stylesheet" href="../ui.css">
 <body class="popup">
   <h1>Flow Pilot</h1>
+  <div id="waiting" class="banner" hidden><span id="waitingText"></span>
+    <button id="focusTab" class="inline">Show the Flow tab</button></div>
   <p id="summary">Loading…</p>
+  <p class="hint">Keep this tab in front while jobs submit — Flow only re-renders in the front tab, so approved jobs wait until you bring it forward.</p>
+
+  <h2>Flow health</h2>
   <ul id="checks"></ul>
+  <p class="hint" id="healthHint"></p>
+
   <button id="use">Use this tab as the work tab</button>
+  <button id="prompts">Describe it once → scene prompts</button>
   <button id="dashboard">Open dashboard</button>
   <script type="module" src="popup.js"></script>
 </body>

@@ -6,7 +6,11 @@
   <h1>Flow Pilot</h1>
   <div id="halt" class="banner" hidden><span id="haltReason"></span> <button id="clearHalt" class="inline">Clear halt (after checking Flow)</button></div>
   <p id="summary"></p>
+  <p class="hint">Keep the Flow tab in front while jobs submit — Flow only re-renders in the front tab, so approved jobs wait until you bring it forward.</p>
+
+  <h2>Flow health</h2>
   <ul id="checks"></ul>
+  <p class="hint" id="healthHint"></p>
 
   <h2>Agents</h2>
   <p id="helper"></p>
@@ -48,6 +52,7 @@
   <table id="previewTable" hidden><thead><tr><th>#</th><th>Scene</th><th>Prompt</th><th>Settings</th><th>Cost</th><th>Problem</th></tr></thead><tbody id="previewRows"></tbody></table>
 
   <h2>Add a job</h2>
+  <p><button id="prompts" type="button" style="display:inline;width:auto">Describe it once → scene prompts</button></p>
   <form id="add">
     <label>Name</label><input name="name" required>
     <label>Prompt</label><textarea name="prompt" required></textarea>
@@ -66,6 +71,7 @@
 
   <h2>Queue</h2>
   <p><button id="approveAll" class="inline" type="button">Approve all queued</button>
+     <button id="focusTab" class="inline" type="button" hidden>Show the Flow tab</button>
      <span id="waiting" class="hint"></span></p>
   <table><thead><tr><th>Name</th><th>State</th><th>Cost</th><th>Prompt</th><th></th></tr></thead><tbody id="jobs"></tbody></table>
   <script type="module" src="dashboard.js"></script>
