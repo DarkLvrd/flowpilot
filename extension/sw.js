@@ -5,8 +5,8 @@ import { RPC, buildFReq, parseBatchResponse } from './lib/rpc.js';
 import { pageRpc } from './lib/page-rpc.js';
 import { createJobStore } from './lib/jobs.js';
 import { createRunner } from './lib/runner.js';
-import { parseCatalog, creditCost, recipeFor } from './lib/catalog.js';
-import { validateReferences } from './lib/refs.js';
+import { parseCatalog, creditCost } from './lib/catalog.js';
+import { buildJob, safeName } from './lib/jobspec.js';
 import { parseProjectMedia } from './lib/media.js';
 import { newlyUploadedId, referenceNames } from './lib/refs.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
@@ -146,8 +146,6 @@ const refs = {
 
 // ---- Files --------------------------------------------------------------------------------
 
-const safeName = (s) => String(s).replace(/[^\w.\- ]+/g, '_').trim().slice(0, 120) || 'untitled';
-
 function toBase64(bytes) {
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -155,8 +153,6 @@ function toBase64(bytes) {
 }
 
 const MIME = { mp4: 'video/mp4', png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
-const VIDEO_EXT = /\.mp4$/i;
-const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
 
 const files = {
   async fetchBytes(url) {
@@ -261,63 +257,24 @@ async function selfCheck(tabId) {
 
 // ---- Jobs from people and agents ------------------------------------------------------------
 
-async function addJob(spec) {
+async function addJob(spec, { recipes, projectId } = {}) {
   const tab = await workTab.get();
   if (!tab) throw new Error('Pick a work tab first');
-  const prompt = String(spec.prompt ?? '').replace(/\r\n?/g, '\n').trim();
-  if (!prompt) throw new Error('Prompt is empty');
-  const projectId = spec.projectId ?? tab.projectId;
-  if (!/^[0-9a-f-]{36}$/.test(projectId)) throw new Error('Bad project id');
+  const pid = projectId ?? spec.projectId ?? tab.projectId;
+  // The catalog is read once per batch (import passes its own) but validated through the one path.
+  const cat = recipes === undefined ? await catalogRecipes() : recipes;
+  return store.add(buildJob(spec, { projectId: pid, recipes: cat }));
+}
 
-  const kind = spec.kind ?? 'video';
-  const hasRefFields = (spec.refs?.length ?? 0) > 0 || spec.firstFrame != null || spec.lastFrame != null;
-  if (kind !== 'video' && hasRefFields) {
-    throw new Error('References (Ingredients and Frames) are for video jobs; image reference support is not wired yet');
-  }
-  // Infer the input from the fields when it isn't named: a frame field means Frames, references
-  // mean Ingredients, otherwise plain text. validateReferences throws a clear error on a bad ref.
-  const rawInput = spec.input ?? (spec.firstFrame != null || spec.lastFrame != null ? 'frames' : (spec.refs?.length ? 'ingredients' : 'text'));
-  const referencePlan = kind === 'video'
-    ? validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame })
-    : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null };
-
-  const settings = {
-    kind,
-    // Flow has no "text" radio: text and Ingredients both use the Ingredients tab (an empty
-    // ingredients list is plain text-to-video); only Frames uses the Frames tab.
-    input: referencePlan.input === 'frames' ? 'frames' : 'ingredients',
-    resolution: spec.resolution ?? '720p',
-    durationS: Number(spec.durationS ?? 4),
-    aspect: spec.aspect ?? '16:9',
-    count: Number(spec.count ?? 1),
-    model: spec.model,
-    refs: spec.refs ?? [],
-    firstFrame: spec.firstFrame ?? null,
-    lastFrame: spec.lastFrame ?? null,
-  };
-  const outputPath = spec.outputPath == null || spec.outputPath === '' ? undefined : String(spec.outputPath);
-  if (outputPath) {
-    if (!/^(\/|[A-Za-z]:[\\/])/.test(outputPath)) throw new Error(`Output path must be absolute: ${outputPath}`);
-    const ext = settings.kind === 'video' ? VIDEO_EXT : IMAGE_EXT;
-    if (!ext.test(outputPath)) throw new Error(`Output path for a ${settings.kind} must end in ${settings.kind === 'video' ? '.mp4' : '.png, .jpg or .webp'}: ${outputPath}`);
-  }
-  if (!['16:9', '9:16'].includes(settings.aspect)) throw new Error(`Unsupported aspect: ${settings.aspect}`);
-  if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
-  const recipe = recipeFor(settings);
+// Reads the model catalog for pricing. A blocked RPC halts everything and refuses the job rather
+// than queueing blind (docs/SPEC.md hard rules; docs/LESSONS.md #19).
+async function catalogRecipes() {
   const catalog = await flow.call('catalog', []);
   if (catalog.kind === 'blocked') {
     await store.halt(catalog.message);
     throw new Error(`Halted, job not added: ${catalog.message}`);
   }
-  const recipes = catalog.ok ? parseCatalog(catalog.data) : null;
-  const unit = recipes ? creditCost(recipes, recipe) : null;
-  const expectedCost = unit == null ? null : unit * settings.count;
-  const modelFamily = recipes?.get(recipe)?.family ?? null;
-
-  // referencePlan holds the classified references (media ids and/or absolute paths); `references`
-  // is filled with the resolved media ids at submit, once any path has been uploaded, and is what
-  // the pre-spend check verifies against what the composer actually has attached.
-  return store.add({ name: safeName(spec.name ?? `job-${Date.now()}`), projectId, prompt, settings, referencePlan, references: null, recipe, expectedCost, modelFamily, outputPath });
+  return catalog.ok ? parseCatalog(catalog.data) : null;
 }
 
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.
