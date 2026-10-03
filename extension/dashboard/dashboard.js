@@ -11,6 +11,7 @@ let shownCap; // the saved cap last written into the box; the box is only refres
 let importFilename = ''; // the chosen file's name, so format detection can use the extension
 let preview = null; // the last previewImport result
 let presets = []; // the saved presets, for the select and Load
+let grantedFolderName = null; // the name of the folder granted for this session, if any
 
 async function render() {
   const s = await send('status');
@@ -135,6 +136,7 @@ function presetFromForm() {
     aspect: f.aspect,
     count: Number(f.count),
     template: $('template').value.trim(),
+    folder: grantedFolderName ?? '',
     refs: (f.refs ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean),
   };
   if (f.firstFrame?.trim()) preset.firstFrame = f.firstFrame.trim();
@@ -159,9 +161,15 @@ function loadPresetIntoForm(p) {
 
 async function renderFolder() {
   const handle = await getFolderHandle();
-  if (!handle) { $('folderName').textContent = 'Downloads/FlowPilot (browser download)'; return; }
-  const granted = await folderGranted(handle);
-  $('folderName').textContent = granted ? `${handle.name}/` : `${handle.name} (permission expired — choose it again)`;
+  const granted = handle ? await folderGranted(handle) : false;
+  grantedFolderName = handle && granted ? handle.name : null;
+  const base = !handle
+    ? 'Downloads/FlowPilot (browser download)'
+    : (granted ? `${handle.name}/` : `${handle.name} (permission expired — choose it again)`);
+  // A preset's folder is a name, not a live grant: the File System Access handle is session-only.
+  const preset = presets.find((p) => p.id === $('presetSelect').value);
+  const hint = preset?.folder && preset.folder !== grantedFolderName ? ` · preset folder “${preset.folder}” — choose it again for this session` : '';
+  $('folderName').textContent = base + hint;
 }
 
 function updateTemplateExample() {
@@ -220,6 +228,7 @@ $('pickFolder').onclick = act(async () => {
   await renderFolder();
 }, 'importError');
 $('template').oninput = updateTemplateExample;
+$('presetSelect').onchange = act(() => renderFolder(), 'importError');
 
 $('approveAll').onclick = act(async () => {
   const s = await send('status');
