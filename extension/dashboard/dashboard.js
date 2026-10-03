@@ -4,10 +4,13 @@ import { send, renderChecks, frontTabNotice } from '../ui.js';
 import { FLOW_CHANGED_HINT } from '../lib/health.js';
 import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.js';
 import { applyNameTemplate } from '../lib/naming.js';
+import { createEntitiesPanel, entityNames } from './entities.js';
 
 const $ = (id) => document.getElementById(id);
 const show = (id, e) => { const el = $(id); el.hidden = !e; el.textContent = e?.message ?? ''; };
 const act = (fn, errId = 'error') => async (...a) => { try { show(errId, null); await fn(...a); } catch (e) { show(errId, e); } };
+// The consistency entity library (report §2.1): rendered from this dashboard's own render().
+const entitiesPanel = createEntitiesPanel($('entities'));
 
 let shownCap; // the saved cap last written into the box; the box is only refreshed when it changes
 let importFilename = ''; // the chosen file's name, so format detection can use the extension
@@ -117,13 +120,15 @@ async function render() {
   await renderFolder();
 
   const byId = new Map(s.jobs.map((j) => [j.id, j]));
-  const rows = s.jobs.slice().reverse().map((j) => {
+  const rows = await Promise.all(s.jobs.slice().reverse().map(async (j) => {
     const tr = document.createElement('tr');
     const cell = (t) => { const td = document.createElement('td'); td.textContent = t; tr.append(td); return td; };
     cell(j.name);
     cell(stateText(j, byId));
     cell(costText(j));
     cell(j.prompt);
+    // A job composed from the entity library says which subjects it used (report §3 Phase 1).
+    cell((await entityNames(j.projectId, j.entities ?? [])).join(', '));
     const actions = cell('');
     const btn = (label, cmd, enabled = true) => {
       const b = document.createElement('button'); b.className = 'inline'; b.textContent = label; b.disabled = !enabled;
@@ -141,9 +146,30 @@ async function render() {
     if (['queued', 'approved', 'halted', 'awaiting-preview'].includes(j.state)) btn('Cancel', 'cancel');
     if (j.state === 'failed' && j.clickedAt == null && !j.mayHaveSubmitted) btn('Re-queue', 'requeue');
     if (j.state === 'failed' && j.mediaId) btn('Retry download', 'retryDownload');
-    return tr;
-  });
-  $('jobs').replaceChildren(...rows);
+    if (!j.promptParts?.length) return tr;
+
+    // The exact text Flow will receive, with each composed part's hash. Revealed on demand; it is a
+    // read of what is already stored, so it can never spend anything.
+    const panel = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.hidden = true;
+    const head = document.createElement('div');
+    head.textContent = `parts: ${j.promptParts.map((p) => `${p.kind} ${String(p.ref).slice(0, 8)} ${p.sha256.slice(0, 12)}…`).join(' · ')}`;
+    const pre = document.createElement('pre');
+    pre.style.whiteSpace = 'pre-wrap';
+    pre.textContent = j.prompt;
+    td.append(head, pre);
+    panel.append(td);
+    const preview = document.createElement('button');
+    preview.className = 'inline';
+    preview.textContent = 'Preview prompt';
+    preview.onclick = () => { td.hidden = !td.hidden; };
+    actions.append(preview);
+    return [tr, panel];
+  }));
+  $('jobs').replaceChildren(...rows.flat());
+  entitiesPanel.render(s.workTab?.projectId ?? null);
 }
 
 // ---- Storyboard import ------------------------------------------------------------------------
