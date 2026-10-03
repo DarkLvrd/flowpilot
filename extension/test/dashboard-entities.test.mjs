@@ -50,6 +50,12 @@ test('entityNames turns a job\'s entity ids into names and caches the library', 
   const before = asked;
   await entityNames(PID, [{ entityId: 'ent_4b1e77aa' }]);
   assert.equal(asked, before); // served from the cache: a queue render does not re-ask per job
+
+  // A library that cannot be read never hides the queue: the row falls back to the ids.
+  fail = 'No work tab: open a Flow project in the tab you bound, or pass a project id';
+  // A project never seen before, so the cache cannot answer for it.
+  assert.deepEqual(await entityNames('11111111-2222-3333-4444-555555555555', [{ entityId: 'ent_4b1e77aa' }]), ['ent_4b1e77aa']);
+  fail = null;
 });
 
 test('the panel renders a card with the canonical block verbatim and the library warnings', async () => {

@@ -2,7 +2,8 @@
 // dashboard, with no browser interaction and no way to spend credits.
 //
 // A card per entity: kind, version, approved pill, its locked Flow media ids and the canonical text
-// block that goes into every prompt verbatim. The person can add an entity by pasting a locked media
+// block that goes into every prompt verbatim. References are shown as id + role + label: a thumbnail
+// needs a signed flow-content.google URL, which is a later phase's read-only media-detail call. The person can add an entity by pasting a locked media
 // id (a photo dropped here is recorded as provenance only — the browser cannot know a file's path,
 // and a path is not a locked reference), approve it, replace a reference (a new version, with the
 // old set kept in history) or remove it. The canonical style lock from pixar-studio's style_lock.md
@@ -40,12 +41,16 @@ chrome.storage.onChanged.addListener((changes) => {
 
 export async function entityNames(projectId, entityRefs = []) {
   if (!entityRefs.length) return [];
-  if (!nameCache.has(projectId)) {
-    const { library } = await send('entities', { projectId });
-    nameCache.set(projectId, library);
+  try {
+    if (!nameCache.has(projectId)) {
+      const { library } = await send('entities', { projectId });
+      nameCache.set(projectId, library);
+    }
+    const library = nameCache.get(projectId);
+    return entityRefs.map((ref) => library.entities.find((e) => e.id === ref.entityId)?.name ?? ref.entityId);
+  } catch {
+    return entityRefs.map((ref) => ref.entityId); // never hide the queue because the library failed to load
   }
-  const library = nameCache.get(projectId);
-  return entityRefs.map((ref) => library.entities.find((e) => e.id === ref.entityId)?.name ?? ref.entityId);
 }
 
 export function createEntitiesPanel(root) {
