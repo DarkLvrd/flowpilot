@@ -457,3 +457,35 @@ test('a block while resolving references halts everything', async () => {
   assert.equal((await store.session()).halted, true);
   assert.ok(!world.log.includes('click'));
 });
+
+// ---- Preview-first ----------------------------------------------------------------------------
+
+// The point of preview-first: once the person approves the free still, the video runs from exactly
+// that still, through the ordinary Frames path, and only then does the spend happen.
+test('a promoted preview-first video submits with the approved still as its first frame', async () => {
+  const { store, world, runner } = await setup();
+  const video = await store.add(spec('film', {
+    recipe: 'abra_i2v_4s_360p',
+    settings: { kind: 'video', input: 'frames', resolution: '360p', durationS: 4, aspect: '16:9', count: 1, refs: [], firstFrame: null, lastFrame: null },
+    referencePlan: { input: 'frames', ingredients: [], firstFrame: null, lastFrame: null },
+    role: 'video', initialState: 'awaiting-preview',
+  }));
+  assert.equal((await store.get(video.id)).state, 'awaiting-preview');
+  assert.equal((await store.session()).spent, 0); // the still was free and the video is held
+
+  await store.apply(video.id, {
+    type: 'promote',
+    referencePlan: { input: 'frames', ingredients: [], firstFrame: { kind: 'mediaId', mediaId: REF_A }, lastFrame: null },
+    settings: { ...video.settings, input: 'frames', firstFrame: REF_A },
+  });
+  // The page must show the Frames input for the mode check to pass.
+  world.driver.prepare = (function (orig) { return async (j) => ({ ...(await orig(j)), input: 'frames' }); })(world.driver.prepare);
+
+  await runner.tick();
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(video.id);
+  assert.equal(after.state, 'submitted');
+  assert.equal(after.references.firstFrame, REF_A);
+  assert.equal(after.cost, 4);
+  assert.equal((await store.session()).spent, 4); // spent only now, after the still was approved
+});
