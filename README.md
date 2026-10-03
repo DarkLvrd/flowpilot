@@ -48,9 +48,9 @@ is overlaid on Flow's own page.
 - **Popup** — shows status and self-check results, lets you set the current tab as the work tab,
   and opens the dashboard.
 - **Dashboard** — the self-check summary, an **Agents** section with the **Pair an agent** button,
-  the **Session credit cap** (set or raise it here; nothing is submitted past it), an **Add a job**
-  form (name, prompt, kind image/video, resolution, duration, aspect, and references — Ingredients
-  or Frames, below), and the **Queue** table.
+  the **Session credit cap** (set or raise it here; nothing is submitted past it), a **Batch /
+  storyboard import** section, an **Add a job** form (name, prompt, kind image/video, resolution,
+  duration, aspect, count, and references — Ingredients or Frames, below), and the **Queue** table.
 - **Approvals** — each queued job shows an **Approve** button; jobs wait as `queued` until approved,
   then run from the work tab. Queued/approved/halted jobs can be **Cancel**led; a failed job that
   was never clicked can be **Re-queue**d, and one whose render finished can **Retry download**.
@@ -59,8 +59,56 @@ is overlaid on Flow's own page.
 - **Halts** — any `UNUSUAL_ACTIVITY` (or similar block) stops the whole queue and shows a banner
   with a **Clear halt** button; there is no automatic retry.
 
-Storyboard import (JSON/CSV bulk queueing) and the folder picker are planned in
-[`docs/SPEC.md`](docs/SPEC.md) decisions 3 and 5; the current dashboard adds jobs one at a time.
+Storyboard import (JSON/CSV bulk queueing) and the folder picker are built (SPEC decisions 3 and
+5): the dashboard now adds jobs one at a time *or* a whole batch at once.
+
+### Batch / storyboard import
+
+Fill the queue from a storyboard instead of typing jobs one at a time. Drop a `.json` or `.csv`
+file, choose one, or paste a list; **Preview batch** validates and prices every row *before*
+anything is queued, and **Import** queues the whole batch — or refuses all of it and lists the bad
+rows by number, so a partial import can never happen. **Approve all queued** approves the batch in
+one click.
+
+A JSON storyboard is an array of rows (or `{ "scenes": [ … ] }`); a CSV needs a header row and a
+`prompt` (or `scene`) column. Row fields, with common aliases:
+
+| field | aliases | notes |
+|---|---|---|
+| `scene` | `shot` | the row's label; used by the naming template |
+| `prompt` | `text` | required |
+| `kind` | `type` | `video` (default) or `image` |
+| `mode` | `input` | `text`, `ingredients` (with `refs`) or `frames` (with `firstFrame`) |
+| `resolution` | `res` | `360p` or `720p` |
+| `duration` | `durationS` | `4`, `6`, `8` or `10` (seconds) |
+| `aspect` | `ratio` | `16:9` or `9:16` |
+| `count` | `n` | `1`–`4` |
+| `refs` | `references`, `ingredients` | Ingredients: media ids or absolute image paths, separated by `\|`, `;` or a newline |
+| `firstFrame` / `lastFrame` | `startFrame` / `endFrame` | Frames: one media id or absolute image path each |
+| `outputPath` | `output`, `path` | an absolute path for the helper to write |
+| `name` | `title` | the job's label (defaults to the scene) |
+| `model` | | image model (`nano-banana-pro` for Nano Banana Pro) |
+
+```
+scene,prompt,kind,resolution,duration,count
+opening,"a red fox trots through snow",video,360p,4,1
+closing,"the same fox curls up and sleeps",video,360p,8,2
+```
+
+### Output naming, folder picker and presets
+
+- **Name template** — file names come from a documented token pattern, default
+  `{project}/{scene}-{index}`. Tokens: `{project}`, `{scene}`, `{index}` (zero-padded to the batch
+  width), `{name}` and `{prompt}`. Finished files land under `Downloads/FlowPilot/` unless you pick
+  a folder, and an existing file is never overwritten (a collision becomes `-2`, `-3`, …).
+- **Output folder** — **Choose folder** grants a folder for this session through the browser's File
+  System Access API and writes finished files there; without it, or if the permission lapses, files
+  go to the browser's `Downloads/FlowPilot`. With the helper, a job's absolute `outputPath` still
+  writes anywhere.
+- **Presets** — save the current Add-a-job settings (kind, resolution, duration, aspect, count, the
+  name template and a default reference set) under a name, then pick that preset on the import
+  section to repeat a batch without re-entering anything. Saving and deleting presets is
+  dashboard-only, like the credit cap; agents may read and use them.
 
 ## How agents use it
 
