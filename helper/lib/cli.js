@@ -36,6 +36,8 @@ const USAGE = `Usage: flowpilot <command>
   entity supersede --project P --name Rudy --ref <mediaId> --reason "flat bronze"
   entity remove --project P --name Rudy
   entity style --project P              Use the canonical style lock as this project's style entity
+  characters [--project P] [--json]     The project's own Flow Characters (read-only, no credits),
+                                        with the entity id and media id a flowCharacter link needs
   entity export --project P [--file out.json] | entity import --project P --file lib.json [--replace]
   entity restore --project P [--replace]  Pull the helper's mirrored copy back after a reinstall
   prompts <jobId> [--json]              The composed prompt parts and hashes (dry run, no spend)
@@ -135,6 +137,12 @@ export async function main(argv, { env = process.env, out = console.log, err = c
         needKey(); print(await client().act(id(), cmd), formatJob); return 0;
       case 'entity': return await entityCommand(rest, o, { client: client(), needKey, out, print });
       case 'shots': return await shotsCommand(rest, o, { client: client(), needKey, print });
+      case 'characters': {
+        needKey();
+        const { characters } = await client().characters(o.project);
+        print({ projectId: o.project ?? null, characters }, formatCharacters);
+        return 0;
+      }
       case 'still': {
         needKey();
         const value = await client().still({ projectId: o.project, shotId: id() });
@@ -304,6 +312,17 @@ async function doctor(p, client, out, { env = process.env, probeMcp, config } = 
   add(cfg.ok, `Claude Desktop config (${cfg.file})`, cfgHint);
   out(rows.join('\n'));
   return rows.every((r) => r.startsWith('✅')) ? 0 : 1;
+}
+
+// The characters a project has in Flow itself (report §2). Nothing here spends credits, and nothing
+// here is a library entity: `entity add --kind character` is what links one.
+function formatCharacters({ characters = [] }) {
+  const lines = [`${characters.length} Flow Character(s) in this project`];
+  for (const c of characters) {
+    lines.push(`  ${c.name}  entity ${c.entityId}${c.primaryMediaId ? `  image ${c.primaryMediaId}` : ''}${c.referenceWorkflowIds?.length ? `  refs ${c.referenceWorkflowIds.length}` : ''}`);
+  }
+  if (!characters.length) lines.push('  (none: Flow Characters are per project, and most projects have none)');
+  return lines.join('\n');
 }
 
 function formatStatus(s) {

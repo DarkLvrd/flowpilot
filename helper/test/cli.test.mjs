@@ -216,6 +216,7 @@ test('doctor reports each part of the setup', async () => {
   const expected = [
     'flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download',
     'flowpilot_entity_list', 'flowpilot_entity_upsert', 'flowpilot_entity_approve', 'flowpilot_entity_supersede', 'flowpilot_compose_prompt',
+    'flowpilot_characters',
     'flowpilot_shots', 'flowpilot_import_shots', 'flowpilot_anchor_still', 'flowpilot_review',
   ];
   assert.deepEqual([...TOOL_NAMES].sort(), [...expected].sort());

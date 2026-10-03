@@ -134,6 +134,9 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
     // any of these. `projectId` is optional: without it the extension uses the work tab project.
     const q = url.searchParams.get('projectId') ?? undefined;
     if (req.method === 'GET' && path === '/entities') return callExtension('entities', { projectId: q });
+    // The project's own Flow Characters (report §2): read-only, from the same response the media
+    // reader uses, so an agent can see what to link before writing a `flowCharacter`.
+    if (req.method === 'GET' && path === '/characters') return callExtension('characters', { projectId: q });
     if (req.method === 'GET' && path === '/entities/export') return callExtension('entityExport', { projectId: q });
     if (req.method === 'POST' && path === '/entities') {
       const body = await readJson(req);

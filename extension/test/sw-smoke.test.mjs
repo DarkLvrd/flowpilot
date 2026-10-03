@@ -15,6 +15,8 @@ const focusCalls = []; // tabs.update / windows.update calls (bringing the work 
 const tabs = { 7: { id: 7, windowId: 1, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
 let rateLimited = false; // next RPC answers HTTP 429
+let mediaFixture = 'Zzl0ze'; // Zzl0ze answers this fixture; a test can point it at another project
+const CHAR_PROJECT = 'de7baa89-1896-4825-bf06-ab0853619277';
 
 globalThis.chrome = {
   runtime: {
@@ -42,7 +44,7 @@ globalThis.chrome = {
   scripting: {
     async executeScript({ args: [rpcid] }) {
       if (rateLimited) return [{ result: { status: 429, text: '' } }];
-      const known = { nzlxg: 'nzlxg', HTrJv: 'HTrJv', yBhWQ: 'yBhWQ', Zzl0ze: 'Zzl0ze' };
+      const known = { nzlxg: 'nzlxg', HTrJv: 'HTrJv', yBhWQ: 'yBhWQ', Zzl0ze: mediaFixture };
       return [{ result: known[rpcid] ? { status: 200, text: fixture(known[rpcid]) } : { status: 400, text: '' } }];
     },
   },
@@ -798,6 +800,26 @@ test('composing a prompt is a dry run: it returns the text and hashes and spends
   assert.equal(r.value.parts.every((p) => p.sha256.length === 64), true);
   const s = (await send({ cmd: 'status' })).value.session;
   assert.equal(s.spent, 0);
+});
+
+// Report §8.1 step 1: the read side, end to end through the service worker. No new RPC, no click,
+// no credits — the entity list rides inside the Zzl0ze the media reader already fetches.
+test('the project\'s Flow Characters are read from the media response, and agents may read them', async () => {
+  mediaFixture = 'Zzl0ze-characters';
+  const r = await send({ cmd: 'characters' });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.value.characters, [{
+    entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', projectId: CHAR_PROJECT, name: 'nancy',
+    primaryMediaId: 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca', referenceWorkflowIds: ['e3696fd0-eb73-4b82-a8a2-096fa4cb0dde'],
+  }]);
+  // Most projects have none: an empty list, not an error.
+  mediaFixture = 'Zzl0ze';
+  assert.deepEqual((await send({ cmd: 'characters' })).value.characters, []);
+  // Read-only, so an agent may ask through the helper.
+  helperSays({ id: 30, cmd: 'characters', args: {} });
+  await settle();
+  assert.equal(replyTo(30).ok, true, replyTo(30).error);
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
 });
 
 test('agents may write entities through the helper but still cannot set the cap or clear a halt', async () => {

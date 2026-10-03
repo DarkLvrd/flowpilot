@@ -7,7 +7,7 @@ import { createJobStore } from './lib/jobs.js';
 import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost } from './lib/catalog.js';
 import { buildJob, safeName } from './lib/jobspec.js';
-import { parseProjectMedia, parseMediaDetail } from './lib/media.js';
+import { parseProjectMedia, parseMediaDetail, parseEntities } from './lib/media.js';
 import { newlyUploadedId, referenceNames } from './lib/refs.js';
 import { promotePatch, assertFreePreview, awaitingPreviewCount } from './lib/preview.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
@@ -606,6 +606,17 @@ const handlers = {
     ]);
     return { projectId: pid, library, template, style: defaults.style, imageStyleText: defaults.imageStyleText, warnings: libraryWarnings(library) };
   },
+  // The project's own Flow Characters, read out of the same `Zzl0ze` response the media reader
+  // uses (report §2): read-only, no new RPC, no credits. The dashboard links them to library
+  // entities, because the character's name alone cannot be verified after the fact — its entity id
+  // can (report §8.1 step 2). A block halts everything, like every other Flow read.
+  async characters({ projectId }) {
+    const pid = await projectIdOf(projectId);
+    const r = await flow.call('projectMedia', [`projects/${pid}`, null, null, null, [1]]);
+    if (r.kind === 'blocked') { await store.halt(r.message); throw new Error(`Halted: ${r.message}`); }
+    if (!r.ok) throw new Error(`${RPC.projectMedia}: ${r.message}`);
+    return { projectId: pid, characters: parseEntities(r.data) };
+  },
   async entityUpsert({ projectId, entity }, sender) {
     const pid = await projectIdOf(projectId);
     return entityStore.upsert(pid, { by: fromDashboard(sender) ? 'dashboard' : 'agent', ...(entity ?? {}) });
@@ -868,6 +879,7 @@ const AGENT_COMMANDS = new Set([
   'status', 'addJob', 'previewImport', 'importJobs', 'listPresets', 'approve', 'cancel', 'requeue', 'retryDownload',
   'entities', 'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede',
   'entityRemove', 'entitySetStyle', 'entityImport', 'entityExport', 'entityRestore', 'composePrompt',
+  'characters',
   'shots', 'importShots', 'queueStill', 'approveAnchor', 'stillThumb',
   // The QC loop is job data too: an agent may record a verdict and take a fix (a queued job, still
   // behind the cap and never a click). The cap, the halt, the work tab and pairing stay dashboard-only.
@@ -892,7 +904,7 @@ const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.
 // and entity/prompt commands never need a runner tick at all.
 const NO_TICK = new Set([
   'status', 'selfCheck', 'previewImport', 'listPresets', 'shots', 'stillThumb',
-  'entities', 'composePrompt', 'entityExport',
+  'entities', 'characters', 'composePrompt', 'entityExport',
   'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede', 'entityRemove',
   'entitySetStyle', 'entityImport', 'entityRestore',
   // Reading or recording a verdict changes no state; taking a fix queues a job, so it does tick.

@@ -62,6 +62,12 @@ const TOOLS = [
     run: (c, a) => c.entities(a.projectId),
   },
   {
+    name: 'flowpilot_characters',
+    description: 'The Flow Characters this project has in Flow itself (read-only, no credits): each with the name Flow shows, the entity id and the primary media id. Characters are per project and most projects have none. This is Flow\'s own list, not the library — link one with flowpilot_entity_upsert by setting flowCharacter: { name, entityId, primaryMediaId, referenceWorkflowIds } on a character entity, then approve it.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' } }, additionalProperties: false },
+    run: (c, a) => c.characters(a.projectId),
+  },
+  {
     name: 'flowpilot_entity_upsert',
     description: 'Create or update (as a new version) a consistency entity in a project\'s library. The description is the canonical block inserted verbatim into every prompt that uses the entity. A reference must be a locked Flow media id (a local path is not a locked reference: uploading it again would be a new subject). New entities start unapproved; approve before using them in a job.',
     inputSchema: {
@@ -75,6 +81,7 @@ const TOOLS = [
         aliases: { type: 'array', items: { type: 'string' } },
         orientation: { type: 'string', enum: ['portrait', 'landscape', 'square', 'none'] },
         refs: { type: 'array', items: { type: 'object', properties: { mediaId: { type: 'string' }, role: { type: 'string' }, label: { type: 'string' } }, required: ['mediaId'], additionalProperties: false }, description: 'Locked Flow media ids with a unique label per project' },
+        flowCharacter: { type: 'object', properties: { name: { type: 'string' }, entityId: { type: 'string', description: 'From flowpilot_characters' }, primaryMediaId: { type: 'string' }, referenceWorkflowIds: { type: 'array', items: { type: 'string' } } }, required: ['name', 'entityId'], additionalProperties: false, description: 'A Flow Character this entity IS (from flowpilot_characters). It needs no locked photo reference: Flow holds the face, the prompt names it and the picker attaches it.' },
         approve: { type: 'boolean', description: 'Approve it in the same call' },
       },
       required: ['name'],

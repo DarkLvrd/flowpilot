@@ -59,7 +59,7 @@ test('initializes and lists the Flow Pilot tools; none can set the cap or clear 
   s.notify('notifications/initialized');
   const { result: { tools } } = await s.call('tools/list', {});
   const names = tools.map((t) => t.name);
-  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_anchor_still', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_import_shots', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_review', 'flowpilot_shots', 'flowpilot_status']);
+  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_anchor_still', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_characters', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_import_shots', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_review', 'flowpilot_shots', 'flowpilot_status']);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
   assert.ok(!names.some((n) => /cap|halt|tab/.test(n)));
   await s.end();

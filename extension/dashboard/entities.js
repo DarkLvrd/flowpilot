@@ -58,6 +58,10 @@ export function createEntitiesPanel(root) {
   let followWorkTab = true;
   let data = null; // { projectId, library, template, style, warnings }
   let error = null;
+  // The project's own Flow Characters (report §2): read-only, from the response Flow Pilot already
+  // fetches. Kept separate from `error` so a failed character read never hides the library.
+  let characters = [];
+  let characterError = null;
 
   const showError = (e) => { error = e?.message ?? null; render(); };
 
@@ -67,6 +71,13 @@ export function createEntitiesPanel(root) {
       if (!project) project = data.projectId;
       error = null;
     } catch (e) { error = e.message; }
+    try {
+      ({ characters } = await send('characters', project ? { projectId: project } : {}));
+      characterError = null;
+    } catch (e) {
+      characters = [];
+      characterError = e.message;
+    }
   }
 
   const act = (fn) => async (...a) => {
@@ -98,6 +109,12 @@ export function createEntitiesPanel(root) {
       entity.approvedBy ? el('span', { textContent: ` by ${entity.approvedBy}` }) : null,
     ));
     row.append(el('pre', { textContent: entity.description, style: 'white-space:pre-wrap;margin:4px 0;font:12px/1.4 ui-monospace,monospace' }));
+    if (entity.flowCharacter) {
+      row.append(el('div', {
+        textContent: `Flow Character: ${entity.flowCharacter.name} (entity id ${entity.flowCharacter.entityId})${entity.flowCharacter.primaryMediaId ? ` · image ${entity.flowCharacter.primaryMediaId}` : ''}`,
+        style: 'font-size:12px;color:#1e8e3e',
+      }));
+    }
     if (entity.negative) row.append(el('div', { textContent: `Negative: ${entity.negative}`, style: 'font-size:12px;color:#5f6368' }));
     for (const ref of entity.refs ?? []) {
       const reason = el('input', { placeholder: 'reason (e.g. flat bronze rear half)', style: 'width:28ch' });
@@ -123,6 +140,56 @@ export function createEntitiesPanel(root) {
     for (const h of entity.history ?? []) row.append(el('div', { textContent: `v${h.version} superseded: ${h.reason ?? ''}`, style: 'font-size:12px;color:#5f6368' }));
     row.append(buttons);
     return row;
+  }
+
+  // The characters Flow itself holds for this project, read from the project (report §2). A person
+  // links one to a library entity with one click; the entity id is what the job and the QC record
+  // then verify, and it is why the link cannot be made from the name alone.
+  function charactersSection() {
+    const box = el('div', {});
+    box.append(el('h3', { textContent: `Flow Characters in this project (${characters.length})` }));
+    box.append(el('p', {
+      textContent: 'Read from the project itself: no click, no credits. Linking one makes it usable as an entity — the prompt names it and the picker attaches it, and the generation record can confirm it afterwards.',
+      style: 'font-size:12px;color:#5f6368',
+    }));
+    if (characterError) box.append(el('p', { className: 'banner', textContent: `Flow Characters could not be read: ${characterError}` }));
+    for (const c of characters) {
+      const linked = data.library.entities.find((e) => e.flowCharacter?.entityId === c.entityId);
+      const sameName = data.library.entities.find((e) => e.name.trim().toLowerCase() === c.name.trim().toLowerCase());
+      const row = el('div', { style: 'border:1px solid #ddd;border-radius:6px;padding:6px;margin:4px 0;max-width:900px;font-size:13px' });
+      row.append(el('code', { textContent: c.name }), el('span', {
+        textContent: ` · entity ${c.entityId}${c.primaryMediaId ? ` · image ${c.primaryMediaId}` : ''}${c.referenceWorkflowIds?.length ? ` · ${c.referenceWorkflowIds.length} reference workflow(s)` : ''}`,
+      }));
+      if (linked) {
+        row.append(el('span', { textContent: ` ✅ linked to ${linked.name}`, style: 'color:#1e8e3e' }));
+      } else {
+        const link = el('button', { textContent: sameName ? `Link to ${sameName.name}` : 'Add to the library', style: 'display:inline;width:auto;margin-left:6px' });
+        link.onclick = act(() => send('entityUpsert', { projectId: project, entity: characterEntity(c, sameName ?? null) }));
+        row.append(link);
+      }
+      box.append(row);
+    }
+    if (!characters.length && !characterError) {
+      box.append(el('p', { textContent: 'No Flow Character here. Characters are per project, and most projects have none (Flow\'s own create page is not wired).', style: 'font-size:12px;color:#5f6368' }));
+    }
+    return box;
+  }
+
+  // The library entity for a Flow Character. Its description never reaches the prompt (the block is
+  // left out and the server holds the character), so it is a note for the person, not text for Flow.
+  function characterEntity(c, existing) {
+    return {
+      ...(existing ? { id: existing.id } : {}),
+      name: existing?.name ?? c.name,
+      kind: 'character',
+      ...(existing ? {} : { description: `Flow Character "${c.name}" — Flow holds the face; the prompt names it and Flow's picker attaches it. This block is never sent.` }),
+      flowCharacter: {
+        name: c.name,
+        entityId: c.entityId,
+        ...(c.primaryMediaId ? { primaryMediaId: c.primaryMediaId } : {}),
+        ...(c.referenceWorkflowIds?.length ? { referenceWorkflowIds: c.referenceWorkflowIds } : {}),
+      },
+    };
   }
 
   function addForm() {
@@ -201,6 +268,7 @@ export function createEntitiesPanel(root) {
     });
     tools.append(addStyle, ' ', exportBtn, ' ', importFile);
     root.append(tools);
+    root.append(charactersSection());
 
     const warnings = el('ul', {});
     for (const w of data.warnings ?? []) warnings.append(el('li', { textContent: `⚠️ ${w}` }));

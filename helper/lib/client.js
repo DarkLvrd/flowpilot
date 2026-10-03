@@ -53,6 +53,9 @@ export function createClient({ port, key }) {
 
     // ---- Entities and prompt composition (report §2.7). Nothing here can spend credits.
     entities: (projectId) => call('GET', `/entities${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    // The project's own Flow Characters (report §2), read from the response Flow Pilot already
+    // fetches. Read-only and free: it is what the library links its `flowCharacter` ids to.
+    characters: (projectId) => call('GET', `/characters${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
     entityUpsert: (projectId, entity) => call('POST', '/entities', { projectId, entity }),
     // action: approve | unapprove | ref | supersede | remove | style | import | restore
     entityAct: (action, body) => call('POST', `/entities/${action}`, body),
