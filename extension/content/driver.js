@@ -31,6 +31,8 @@
   // Reference tiles and attached thumbnails can take a few seconds to render (a fresh upload, or a
   // virtual-scroller picker); one budget for finding a tile and for reading the attach back.
   const ATTACH_WAIT_MS = 15_000;
+  // Closing the asset picker is a click and a DOM change, not a render: short, but not zero.
+  const PICKER_CLOSE_MS = 3_000;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -200,11 +202,36 @@
     await waitFor(picker, { what: 'the asset picker' });
   }
 
+  // The picker's own close control. The Frames picker has one — a mat-icon-button labelled `Close`
+  // (live 2026-10-03, recon/FINDINGS.md "Closing the picker") — and clicking it is the only thing
+  // that closed that picker: a backdrop click did nothing, and in Frames mode the composer has no
+  // "Add ingredients" button to toggle either.
+  function pickerCloseControl(scope) {
+    return $$('button, [role=button]', scope).find((b) => {
+      const label = (b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('mattooltip') || '').trim();
+      if (/^close$/i.test(label)) return true;
+      const icon = $('mat-icon', b);
+      return !!icon && text(icon).toLowerCase() === 'close';
+    }) ?? null;
+  }
+
+  // Clears the asset picker, in the order the live page needs. The picker's own `close` control
+  // first, then the CDK backdrop, then the composer's ingredients button (the Ingredients picker has
+  // no close control of its own and is dismissed by its trigger). Each step waits on the real DOM;
+  // when none of them closes it the call throws, because a picker left open over the composer makes
+  // the *next* step report something misleading ("Settings trigger is not clickable") — the wedge
+  // this exists to prevent (BUG-5). A page with no picker open is a no-op.
   async function closePicker() {
     if (!picker()) return;
-    const backdrop = $$('.cdk-overlay-backdrop').find((el) => el.offsetParent !== null);
-    if (backdrop) backdrop.click(); else composerButton(NAMES.ingredients)?.click();
-    await waitFor(() => !picker(), { what: 'the asset picker to close' }).catch(() => {});
+    const steps = [() => pickerCloseControl(picker()), () => $$('.cdk-overlay-backdrop').find((el) => el.offsetParent !== null), () => composerButton(NAMES.ingredients)];
+    for (const step of steps) {
+      const control = step();
+      if (!control) continue;
+      if (!clickable(control)) continue;
+      control.click();
+      if (await waitFor(() => !picker(), { what: 'the asset picker to close', timeoutMs: PICKER_CLOSE_MS }).catch(() => null)) return;
+    }
+    throw new Error('The asset picker would not close (tried its own close control, the backdrop and the ingredients button); close it by hand before running another job');
   }
 
   // A picker tile carries no media id (thumbnails are /asb/ tokens, recon 2026-10-01), so it is
@@ -223,8 +250,8 @@
     return $$('button, [role=button], [role=option], [role=gridcell]', p).filter((t) => visibleText(t) === name || tileName(t) === name);
   };
 
-  // Selects the tile for one media, whose label Flow may show anyone of several ways. Candidates are
-  // tried in order and the *first one that matches anything* decides: the tile Flow really labels
+  // Selects the tile for one media, whose label Flow may show in any one of several ways. Candidates
+  // are tried in order and the *first one that matches anything* decides: the tile Flow really labels
   // this media by is not something to guess at past that point. A candidate that matches several
   // tiles cannot identify a media (Flow gives several media the same title — live 2026-10-03, three
   // tiles read "Woman driving Formula One car"), so the job fails instead of attaching one of them.
@@ -295,58 +322,69 @@
   // Attaches already-in-project references to the composer for the job's input mode. The Video mode
   // radios must already be set to Ingredients/Frames before attaching (in Image mode Flow's grid can
   // route a selection into the out-of-scope image editor — recon 2026-10-01), and an image job's
-  // Ingredients go through the same asset picker. References carry a `names` map (media id → tile
-  // name) because the picker grid shows no id. Closes the picker in every case so a failure never
-  // leaves it open.
+  // Ingredients go through the same asset picker. References carry a `names` map (media id → the
+  // labels Flow may show that media under, in the order to try) because the picker grid shows no id.
+  // A failed attach closes what it opened, and a picker that will not close is reported with the
+  // failure that left it open: an overlay left over the composer is what wedges the next prepare.
   async function attachReferences(input, references) {
+    try {
+      return await attachEachReference(input, references);
+    } catch (e) {
+      try {
+        await closePicker();
+      } catch (closeError) {
+        // A Halt already stops everything for a person to look; never lose that reason.
+        if (!(e instanceof Halt)) e.message = `${e.message}; ${closeError.message}`;
+      }
+      throw e;
+    }
+  }
+
+  async function attachEachReference(input, references) {
     const names = references?.names ?? {};
     const nameFor = (id) => names[id] ?? id;
     const characterTokens = {};
-    try {
-      // A Flow Character goes through the same picker, under its own category (report §3b). It has
-      // no media id, so the tile's thumbnail token is captured here and compared with the chip by
-      // the pre-spend check: that comparison is the only proof the right character was attached.
-      if (input !== 'frames') {
-        for (const character of references?.characters ?? []) {
-          await openPicker();
-          await selectPickerCategory(CHARACTER_CATEGORY);
-          const tile = await selectInPicker(character.name);
-          const token = asbToken($('img', tile));
-          if (!token) throw new Error(`The picker tile for the character "${character.name}" has no thumbnail, so its chip could not be verified`);
-          confirmIfPresent();
-          await waitFor(() => !picker(), { what: 'the picker to close after attaching the character' }).catch(() => {});
-          await waitFor(() => characterChipTokens().includes(token), { what: `the character chip for "${character.name}" to appear attached`, timeoutMs: ATTACH_WAIT_MS });
-          characterTokens[character.name] = token;
-        }
-      }
-      if (input === 'frames') {
-        for (const which of ['firstFrame', 'lastFrame']) {
-          const id = references?.[which];
-          if (!id) continue;
-          const slot = $$('button, [role=button]', promptBox() || document).find((b) => visibleText(b) === FRAME_SLOT[which]);
-          if (!clickable(slot)) throw new Error(`The ${FRAME_SLOT[which]} frame slot is not clickable`);
-          slot.click();
-          await waitFor(picker, { what: `the picker for the ${FRAME_SLOT[which]} frame` });
-          await selectInPicker(nameFor(id));
-          confirmIfPresent();
-          await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
-          // The thumbnail renders just after the picker closes; wait for it so the pre-spend check
-          // (which reads attached ids) does not run before the reference is on the page.
-          await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: ATTACH_WAIT_MS });
-        }
-        return characterTokens;
-      }
-      for (const id of references?.ingredients ?? []) {
+    // A Flow Character goes through the same picker, under its own category (report §3b). It has
+    // no media id, so the tile's thumbnail token is captured here and compared with the chip by
+    // the pre-spend check: that comparison is the only proof the right character was attached.
+    if (input !== 'frames') {
+      for (const character of references?.characters ?? []) {
         await openPicker();
+        await selectPickerCategory(CHARACTER_CATEGORY);
+        const tile = await selectInPicker(character.name);
+        const token = asbToken($('img', tile));
+        if (!token) throw new Error(`The picker tile for the character "${character.name}" has no thumbnail, so its chip could not be verified`);
+        confirmIfPresent();
+        await closePicker();
+        await waitFor(() => characterChipTokens().includes(token), { what: `the character chip for "${character.name}" to appear attached`, timeoutMs: ATTACH_WAIT_MS });
+        characterTokens[character.name] = token;
+      }
+    }
+    if (input === 'frames') {
+      for (const which of ['firstFrame', 'lastFrame']) {
+        const id = references?.[which];
+        if (!id) continue;
+        const slot = $$('button, [role=button]', promptBox() || document).find((b) => visibleText(b) === FRAME_SLOT[which]);
+        if (!clickable(slot)) throw new Error(`The ${FRAME_SLOT[which]} frame slot is not clickable`);
+        slot.click();
+        await waitFor(picker, { what: `the picker for the ${FRAME_SLOT[which]} frame` });
         await selectInPicker(nameFor(id));
         confirmIfPresent();
-        await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
-        await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: ATTACH_WAIT_MS });
+        await closePicker();
+        // The thumbnail renders just after the picker closes; wait for it so the pre-spend check
+        // (which reads attached ids) does not run before the reference is on the page.
+        await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: ATTACH_WAIT_MS });
       }
       return characterTokens;
-    } finally {
-      await closePicker().catch(() => {});
     }
+    for (const id of references?.ingredients ?? []) {
+      await openPicker();
+      await selectInPicker(nameFor(id));
+      confirmIfPresent();
+      await closePicker();
+      await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: ATTACH_WAIT_MS });
+    }
+    return characterTokens;
   }
 
   function readPage() {
@@ -439,7 +477,9 @@
     // Flow's zoneless Angular only re-renders on timers/animation frames, which Chrome pauses or
     // throttles in background tabs: clicks land but the page never updates (LESSONS.md #23).
     if (document.visibilityState !== 'visible') throw new Error('The Flow work tab must be the front tab of its window');
-    await closePicker().catch(() => {}); // a prior failed attach may have left the asset picker open over the composer
+    // A prior failed attach may have left the asset picker open over the composer. Clear it, or fail
+    // here with that reason rather than at the next click with a misleading one (BUG-5).
+    await closePicker();
     try {
       await fillPrompt(job.prompt);
     } catch (e) {
@@ -513,7 +553,9 @@
 
   const inFront = () => document.visibilityState === 'visible';
 
-  const api = { selfCheck, readPage, prepare, clickGenerate, inFront, uploadFile, closePicker };
+  // `attachReferences` and `readPage` are exposed for the driver test and the live rehearsal harness
+  // (recon/dry-run.mjs); prepare is their only caller in the extension itself.
+  const api = { selfCheck, readPage, prepare, clickGenerate, inFront, uploadFile, closePicker, attachReferences };
   globalThis.__flowPilotDriver = api; // isolated world only; the page cannot see it
 
   if (globalThis.chrome?.runtime?.onMessage) {
