@@ -15,6 +15,7 @@ const focusCalls = []; // tabs.update / windows.update calls (bringing the work 
 const tabs = { 7: { id: 7, windowId: 1, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
 let rateLimited = false; // next RPC answers HTTP 429
+let catalogDown = false; // the catalog RPC (HTrJv) answers HTTP 400: no recipes, no halt
 let mediaFixture = 'Zzl0ze'; // Zzl0ze answers this fixture; a test can point it at another project
 const CHAR_PROJECT = 'de7baa89-1896-4825-bf06-ab0853619277';
 
@@ -44,6 +45,7 @@ globalThis.chrome = {
   scripting: {
     async executeScript({ args: [rpcid] }) {
       if (rateLimited) return [{ result: { status: 429, text: '' } }];
+      if (catalogDown && rpcid === 'HTrJv') return [{ result: { status: 400, text: '' } }];
       const known = { nzlxg: 'nzlxg', HTrJv: 'HTrJv', yBhWQ: 'yBhWQ', Zzl0ze: mediaFixture };
       return [{ result: known[rpcid] ? { status: 200, text: fixture(known[rpcid]) } : { status: 400, text: '' } }];
     },
@@ -339,6 +341,26 @@ test('importing a shot list queues one free still per row and no video job at al
   assert.equal(shot.gate.ok, false);
   assert.equal((await send({ cmd: 'status' })).value.jobs.find((j) => j.id === added.stillJobId).settings.kind, 'image');
   assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+});
+
+test('importing a shot list without the catalog plans it and warns, instead of a false credit error', async () => {
+  catalogDown = true;
+  try {
+    await send({ cmd: 'entityUpsert', entity: { name: 'ShotOffline', kind: 'character', description: 'a heavyset man', approved: true, refs: [{ mediaId: REF_MEDIA, role: 'sheet', label: 'offline_sheet_v1' }] } });
+    const r = await send({ cmd: 'importShots', rows: [{ scene: 20, entities: ['ShotOffline'], mode: 'ingredients' }] });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.value.totalCost, null); // unknown, never a claim of "free"
+    assert.equal(r.value.added[0].videoCost, null);
+    assert.match(r.value.added[0].warnings.join(' '), /catalog.*unavailable/i);
+    const still = (await send({ cmd: 'status' })).value.jobs.find((j) => j.id === r.value.added[0].stillJobId);
+    assert.equal(still.settings.kind, 'image');
+    assert.equal(still.expectedCost, null); // priced from Flow's own cost line at click time
+    assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+    assert.equal((await send({ cmd: 'status' })).value.session.halted, false);
+  } finally {
+    catalogDown = false;
+    await send({ cmd: 'entityRemove', name: 'ShotOffline' });
+  }
 });
 
 test('the gate: a shot with no finished still cannot create a video job', async () => {

@@ -483,7 +483,11 @@ export function planShotImport({ text, filename = '', rows: given = null, projec
       const { cost, unknown } = estimateShotCredits(shot, { library, recipes, projectId });
       if (unknown) unknownCostRows.push(index);
       else knownCost += cost;
-      if (stillJob.expectedCost !== 0) throw new Error(`A still must be free: ${stillJob.recipe} reports ${stillJob.expectedCost} credits`);
+      // Without the catalog a still's price cannot be checked, and Flow refuses a still that is not
+      // free — so neither the still's 0 credits nor the video's price is claimed here. The import
+      // still plans; both are priced again before anything is clicked (report §10 #9).
+      if (!recipes) warnings.push('the model catalog is unavailable: the still could not be checked for 0 credits and the video is priced at approval');
+      else if (stillJob.expectedCost !== 0) throw new Error(`A still must be free: ${stillJob.recipe} reports ${stillJob.expectedCost} credits`);
       if (startFrame) warnings.push(`the declared start frame ${startFrame} is not approved yet; the video is created only after you approve a still for this shot`);
       rows.push({ index, scene: shot.scene, name: shot.name, ok: true, error: null, warnings, shot, stillJob, cost, videoCost: cost, stillCost: 0 });
     } catch (e) {
@@ -546,7 +550,7 @@ function anchorFrom(value, row, knownStill) {
 // The stills are free today (recon: every image recipe costs 0), so only the video is priced. The
 // Frames recipe is priced before its still exists (hold), exactly as the eventual job will be.
 export function estimateShotCredits(shot, { library = null, recipes = null, projectId } = {}) {
-  if (!recipes) return { cost: 0, unknown: true };
+  if (!recipes) return { cost: null, unknown: true };
   const spec = shot.mode === 'frames'
     ? videoJobSpec(shot, { input: 'frames' }, { hold: true })
     : videoJobSpec(shot, planReferences(shot, library));

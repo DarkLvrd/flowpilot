@@ -137,6 +137,28 @@ test('an unknown entity fails the row; an unapproved one is left out with a warn
   assert.deepEqual(warned.rows[0].stillJob.referencePlan.ingredients.map((r) => r.mediaId), [MEDIA.rudy]);
 });
 
+test('an unavailable catalog plans the import with an honest warning, not a false credit error', () => {
+  const plan = planShotImport({ rows: [row()], projectId: PID, library: library(), template, recipes: null });
+  assert.equal(plan.anyError, false);
+  assert.equal(plan.rows[0].ok, true, plan.rows[0].error ?? '');
+  // Nothing is claimed to be free: the video's price is unknown until the catalog is back.
+  assert.equal(plan.rows[0].cost, null);
+  assert.equal(plan.rows[0].videoCost, null);
+  assert.equal(plan.totalCost, null);
+  assert.deepEqual(plan.unknownCostRows, [1]);
+  assert.match(plan.rows[0].warnings.join(' '), /catalog.*unavailable/i);
+  assert.equal(plan.rows[0].stillJob.expectedCost, null);
+  assert.equal(plan.rows[0].stillJob.recipe, 'NARWHAL');
+});
+
+test('a still that the catalog prices above zero still fails the row', () => {
+  const paid = new Map(recipes);
+  paid.set('NARWHAL', { ...recipes.get('NARWHAL'), costByTier: Object.fromEntries(Object.keys(recipes.get('NARWHAL').costByTier).map((t) => [t, 2])) });
+  const plan = planShotImport({ rows: [row()], projectId: PID, library: library(), template, recipes: paid });
+  assert.equal(plan.anyError, true);
+  assert.match(plan.rows[0].error, /still must be free/i);
+});
+
 test('a declared anchor may be a media id or a finished still job\'s output path, never a stray path', () => {
   const plan = planShotImport({
     rows: [row({ mode: 'frames', anchor: { startFrame: MEDIA.still, endFrame: null } })],
