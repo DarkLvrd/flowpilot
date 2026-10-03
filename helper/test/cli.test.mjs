@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, statSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,6 +12,13 @@ import { buildServerEntry } from '../lib/claude-desktop.js';
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
+
+// Every world registers itself: a failing assertion must never leave this file's helper server or
+// bridge socket open, because one leaked handle keeps the whole `node --test` process alive (the
+// suite then looks hung even though every test printed a result).
+const worlds = [];
+const closeWorlds = async () => { await Promise.all(worlds.map((w) => w.close())); };
+after(closeWorlds);
 
 async function world({ extension = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'fp-cli-'));
@@ -42,7 +49,9 @@ async function world({ extension = true } = {}) {
   };
   const run = (...argv) => runWith({}, ...argv);
   const close = async () => { ws?.close(); await helper.close(); };
-  return { home, env, keyring, run, runWith, calls, close };
+  const w = { home, env, keyring, run, runWith, calls, close };
+  worlds.push(w);
+  return w;
 }
 
 test('pair stores the key for the owner only; later commands use it', async () => {
@@ -99,7 +108,16 @@ test('errors are short and the exit code is non-zero', async () => {
 
 test('doctor reports each part of the setup', async () => {
   const w = await world();
-  const tools = ['flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download'];
+  // The published MCP surface, stated explicitly so a rename or a removal fails here: the seven job
+  // tools plus the five entity-library/prompt-composition tools (report §2.7). doctor's own check is
+  // that the server advertises exactly what mcp.js publishes.
+  const { TOOL_NAMES } = await import('../lib/mcp.js');
+  const expected = [
+    'flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download',
+    'flowpilot_entity_list', 'flowpilot_entity_upsert', 'flowpilot_entity_approve', 'flowpilot_entity_supersede', 'flowpilot_compose_prompt',
+  ];
+  assert.deepEqual([...TOOL_NAMES].sort(), [...expected].sort());
+  const tools = [...TOOL_NAMES];
   const probeMcp = async () => ({ tools });
   writeFileSync(w.env.FLOWPILOT_CLAUDE_CONFIG, JSON.stringify({ mcpServers: { flowpilot: buildServerEntry({ env: w.env }) } }));
   let r = await w.runWith({ probeMcp }, 'doctor');

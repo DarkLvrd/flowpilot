@@ -11,6 +11,7 @@ import { createPin } from '../lib/pin.js';
 import { createHelper } from '../lib/server.js';
 import { isHelperListening } from '../lib/autostart.js';
 import { main } from '../lib/cli.js';
+import { TOOL_NAMES } from '../lib/mcp.js';
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 
@@ -68,7 +69,12 @@ test('flowpilot mcp reuses a helper already listening and answers a tool call wi
   assert.equal(init.result.protocolVersion, '2025-06-18');
   const listed = await p.call('tools/list', {});
   const names = listed.result.tools.map((t) => t.name).sort();
-  assert.equal(names.length, 7);
+  // The served list must equal the published list (mcp.js TOOL_NAMES): the seven job tools plus the
+  // five entity-library/prompt-composition tools.
+  assert.deepEqual(names, [...TOOL_NAMES].sort());
+  for (const n of ['flowpilot_status', 'flowpilot_add_job', 'flowpilot_retry_download', 'flowpilot_entity_list', 'flowpilot_entity_upsert', 'flowpilot_entity_approve', 'flowpilot_entity_supersede', 'flowpilot_compose_prompt']) {
+    assert.ok(names.includes(n), `the MCP server must publish ${n}`);
+  }
 
   const status = await p.call('tools/call', { name: 'flowpilot_status', arguments: {} });
   assert.equal(status.result.isError, false, status.result.content[0].text);
@@ -109,14 +115,16 @@ function saveKeyFor(home, keyring) {
   writeFileSync(join(home, 'key'), `${key}\n`, { mode: 0o600 });
 }
 
-test('probeMcpServer() runs the real command and reads exactly the seven published tools', async () => {
-  const { probeMcpServer, TOOL_NAMES } = await import('../lib/mcp.js');
+test('probeMcpServer() runs the real command and reads exactly the published tools', async () => {
+  const { probeMcpServer } = await import('../lib/mcp.js');
   const bin = fileURLToPath(new URL('../bin/flowpilot.js', import.meta.url));
   const home = mkdtempSync(join(tmpdir(), 'fp-probe-'));
   const port = await freePort();
   const { tools } = await probeMcpServer({ args: [bin, 'mcp'], env: { ...process.env, FLOWPILOT_HOME: home, FLOWPILOT_PORT: String(port) } });
-  assert.equal(tools.length, 7);
   assert.deepEqual([...tools].sort(), [...TOOL_NAMES].sort());
-  assert.deepEqual(tools.sort(), ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']);
+  // And the job tools are all still there (the entity tools are additions, never replacements).
+  for (const n of ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']) {
+    assert.ok(tools.includes(n), `the MCP server must still publish ${n}`);
+  }
   assert.equal(await isHelperListening(port), false); // listing tools never starts a helper
 });
