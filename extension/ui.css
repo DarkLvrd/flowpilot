@@ -9,3 +9,14 @@ td, th { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; vert
 form { display: grid; grid-template-columns: max-content 1fr; gap: 6px 10px; max-width: 640px; }
 form button { grid-column: 2; width: auto; }
 textarea { min-height: 60px; }
+
+/* Batch / storyboard import (dashboard) */
+.inline { display: inline-block; width: auto; margin: 0 6px 0 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.row input, .row select { width: auto; }
+.drop { border: 2px dashed #bbb; border-radius: 6px; padding: 14px; margin: 8px 0; text-align: center; color: #5f6368; }
+.drop.over { border-color: #1a73e8; background: #e8f0fe; }
+.hint { color: #5f6368; }
+.link { color: #1a73e8; text-decoration: underline; cursor: pointer; }
+#previewTable td:last-child { color: #a50e0e; }
+#previewTable { margin-top: 8px; }

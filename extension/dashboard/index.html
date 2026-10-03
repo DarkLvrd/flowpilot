@@ -4,16 +4,48 @@
 <link rel="stylesheet" href="../ui.css">
 <body>
   <h1>Flow Pilot</h1>
-  <div id="halt" class="banner" hidden><span id="haltReason"></span> <button id="clearHalt">Clear halt (after checking Flow)</button></div>
+  <div id="halt" class="banner" hidden><span id="haltReason"></span> <button id="clearHalt" class="inline">Clear halt (after checking Flow)</button></div>
   <p id="summary"></p>
   <ul id="checks"></ul>
 
   <h2>Agents</h2>
   <p id="helper"></p>
-  <p><button id="pair" style="display:inline;width:auto">Pair an agent</button> <code id="pairCode"></code></p>
+  <p><button id="pair" class="inline">Pair an agent</button> <code id="pairCode"></code></p>
 
   <h2>Session credit cap</h2>
-  <p><input id="cap" type="number" min="0" step="1"> <button id="setCap" style="display:inline;width:auto">Set cap</button></p>
+  <p><input id="cap" type="number" min="0" step="1"> <button id="setCap" class="inline">Set cap</button></p>
+
+  <h2>Batch / storyboard import</h2>
+  <p class="hint">Import a storyboard as JSON or CSV, drop a file, or paste a list. Every row is
+  checked and priced before anything is queued; one bad row refuses the whole import.</p>
+  <div id="drop" class="drop">Drop a <code>.json</code> or <code>.csv</code> storyboard here, or
+    <label class="link">choose a file<input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden></label>
+  </div>
+  <textarea id="importText" placeholder="scene,prompt,kind,resolution,duration&#10;opening,a red fox,video,360p,4&#10;closing,a blue fox,video,360p,4"></textarea>
+
+  <div class="row">
+    <label for="presetSelect">Preset</label>
+    <select id="presetSelect"><option value="">(none)</option></select>
+    <button id="loadPreset" class="inline" type="button">Load into the form</button>
+    <input id="presetName" placeholder="Preset name">
+    <button id="savePreset" class="inline" type="button">Save current settings</button>
+    <button id="deletePreset" class="inline" type="button">Delete</button>
+  </div>
+  <div class="row">
+    <label for="pickFolder">Output folder</label>
+    <button id="pickFolder" class="inline" type="button">Choose folder</button>
+    <span id="folderName" class="hint"></span>
+  </div>
+  <div class="row">
+    <label for="template">Name template</label>
+    <input id="template" value="{project}/{scene}-{index}">
+    <span class="hint">tokens: <code>{project}</code> <code>{scene}</code> <code>{index}</code> <code>{name}</code> <code>{prompt}</code></span>
+  </div>
+  <p id="templateExample" class="hint"></p>
+  <p><button id="preview" class="inline" type="button">Preview batch</button> <button id="import" class="inline" type="button" disabled>Import</button></p>
+  <p id="importSummary"></p>
+  <p id="importError" class="banner" hidden></p>
+  <table id="previewTable" hidden><thead><tr><th>#</th><th>Scene</th><th>Prompt</th><th>Settings</th><th>Cost</th><th>Problem</th></tr></thead><tbody id="previewRows"></tbody></table>
 
   <h2>Add a job</h2>
   <form id="add">
@@ -23,6 +55,7 @@
     <label>Resolution</label><select name="resolution"><option>360p</option><option>720p</option></select>
     <label>Duration</label><select name="durationS"><option>4</option><option>6</option><option>8</option><option>10</option></select>
     <label>Aspect</label><select name="aspect"><option>16:9</option><option>9:16</option></select>
+    <label>Count</label><select name="count"><option>1</option><option>2</option><option>3</option><option>4</option></select>
     <label>Ingredients — reference photos, one media id or absolute image path per line</label>
     <textarea name="refs" placeholder="a Flow media id, or e.g. /Users/me/face.png"></textarea>
     <label>Frames — first frame (media id or absolute image path)</label><input name="firstFrame">
@@ -32,6 +65,8 @@
   <p id="error" class="banner" hidden></p>
 
   <h2>Queue</h2>
+  <p><button id="approveAll" class="inline" type="button">Approve all queued</button>
+     <span id="waiting" class="hint"></span></p>
   <table><thead><tr><th>Name</th><th>State</th><th>Cost</th><th>Prompt</th><th></th></tr></thead><tbody id="jobs"></tbody></table>
   <script type="module" src="dashboard.js"></script>
 </body>
