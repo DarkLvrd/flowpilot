@@ -39,10 +39,12 @@ function readyUrl(detail, kind) {
   }
 }
 
-// A job needs a resolution pass only when its plan names real references (Ingredients or Frames).
+// A job needs a resolution pass when its plan names real references (Ingredients or Frames) or a
+// Flow Character — the character passes through unchanged, but resolving is what records it on the
+// job so the driver attaches it and the pre-spend check has something to verify (report §8.1).
 function needsReferences(job) {
   const p = job.referencePlan;
-  return !!p && ((p.ingredients?.length ?? 0) > 0 || !!p.firstFrame || !!p.lastFrame);
+  return !!p && ((p.ingredients?.length ?? 0) > 0 || !!p.firstFrame || !!p.lastFrame || (p.characters?.length ?? 0) > 0);
 }
 
 export function createRunner({ store, flow, driver, files, workTab, refs, settings, now = () => Date.now() }) {

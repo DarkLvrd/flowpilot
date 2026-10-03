@@ -124,6 +124,11 @@ const driver = {
       generateEnabled: p.generateEnabled,
       overlayOpen: p.overlayOpen || p.agentPanelOpen,
       attached: p.attached,
+      // What each character's picker tile showed (name → /asb/ thumbnail token) and every mention
+      // chip in the prompt: the pre-spend check compares the first with the attached chips and reads
+      // the entity id off the second (report §8.1 step 4).
+      characterTokens: p.characterTokens ?? {},
+      mentions: p.mentions ?? [],
       blocked: p.blocked,
       halt: p.halt,
     };
@@ -182,7 +187,10 @@ const refs = {
     // the names up from Zzl0ze (uploads land there under their filename).
     const media = await projectMediaList(tab.projectId);
     const names = referenceNames(media, [...ingredients, firstFrame, lastFrame].filter(Boolean));
-    return { ingredients, firstFrame, lastFrame, names };
+    // A Flow Character needs no upload and no name lookup: Flow already holds it, the picker lists
+    // it under its own category, and its entity id is what the pre-spend check verifies.
+    const characters = (plan.characters ?? []).map((c) => ({ entityId: c.entityId, name: c.name }));
+    return { ingredients, firstFrame, lastFrame, names, ...(characters.length ? { characters } : {}) };
   },
 };
 

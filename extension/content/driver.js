@@ -18,6 +18,13 @@
   // A media tile/chip shows its id in its thumbnail URL (recon 2026-10-01); this is how references
   // are found in the picker and read back from the composer — the grid has no data-media-id (#14).
   const CONTENT_ID = /flow-content\.google\/(?:image|video)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+  // A Flow Character exposes no media id and no entity id in the DOM: its chip and its picker tile
+  // only carry an /asb/<token> thumbnail (report §4). That token is the only handle the pre-spend
+  // check can compare, and it is byte-identical between the tile and the chip.
+  const ASB_TOKEN = /\/asb\/([A-Za-z0-9_-]+)/;
+  const CHARACTER_CHIP = 'flow-character-ingredient-chip';
+  // The picker's own category rail; a character has its own category and is not in `All` (report §2).
+  const CHARACTER_CATEGORY = 'Characters';
   const UPLOAD_TOOLTIP = 'Upload media';
   const ADD_TO_PROMPT = /^add to prompt$/i;
   const FRAME_SLOT = { firstFrame: 'Start', lastFrame: 'End' };
@@ -25,6 +32,7 @@
   // virtual-scroller picker); one budget for finding a tile and for reading the attach back.
   const ATTACH_WAIT_MS = 15_000;
 
+  const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
   // Material icons are ligature words in the text ("videocam", "crop_16_9"); accessible names skip them.
@@ -150,10 +158,34 @@
     const bar = promptBox()?.querySelector('flow-ingredient-bar') || promptBox();
     return bar ? [...new Set($$('img, video', bar).map(contentId).filter(Boolean))] : [];
   }
+
+  // The open picker's tile for a media, matched by tile text; returns the tile so a caller can read
+  // its thumbnail token (the character chip's only identity handle).
+  const asbToken = (el) => ((el?.getAttribute('src') || el?.src || '').match(ASB_TOKEN) || [])[1] ?? null;
+  // The character chips attached in the composer, by thumbnail token. A character chip carries no
+  // media id (CONTENT_ID does not match it), so it contributes nothing to attachedIdsNow().
+  function characterChipTokens() {
+    const bar = promptBox()?.querySelector('flow-ingredient-bar') || promptBox();
+    if (!bar) return [];
+    return [...new Set($$(`${CHARACTER_CHIP} img`, bar).map(asbToken).filter(Boolean))];
+  }
+
+  // Every mention chip in the prompt, with the entity id Flow will send. Flow marks a mention it
+  // will NOT send (an id outside `validMentionIds`) with `mention-chip-invalid`, and serialises it
+  // as plain text (report §3a) — a silent character failure the pre-spend check fails closed on.
+  function readMentions() {
+    return $$('span.mention-chip', promptBox() || document).map((el) => ({
+      entityId: el.getAttribute('data-entity-id') ?? el.getAttribute('data-mention-id') ?? null,
+      referenceType: el.getAttribute('data-reference-type') ?? null,
+      valid: !el.classList.contains('mention-chip-invalid'),
+    }));
+  }
+
   function readAttached(input) {
     const ids = attachedIdsNow();
-    if (input === 'frames') return { ingredients: [], firstFrame: ids[0] ?? null, lastFrame: ids[1] ?? null };
-    return { ingredients: ids, firstFrame: null, lastFrame: null };
+    const characters = characterChipTokens();
+    if (input === 'frames') return { ingredients: [], firstFrame: ids[0] ?? null, lastFrame: ids[1] ?? null, characters };
+    return { ingredients: ids, firstFrame: null, lastFrame: null, characters };
   }
 
   async function openPicker() {
@@ -187,13 +219,33 @@
   };
 
   // Selects the one tile named `name`; fails closed if none (times out) or several match — never
-  // guesses which media to attach when names collide.
+  // guesses which media to attach when names collide. Returns the tile.
   async function selectInPicker(name) {
     const tiles = await waitFor(() => { const m = pickerTiles(name); return m.length ? m : null; },
       { what: `the picker tile named "${name}"`, timeoutMs: ATTACH_WAIT_MS });
     if (tiles.length > 1) throw new Error(`Several media are named "${name}" in the picker; cannot tell which to attach`);
     if (!clickable(tiles[0])) throw new Error(`The picker tile named "${name}" is not clickable`);
     tiles[0].click();
+    return tiles[0];
+  }
+
+  // Selects one of the picker's own categories (All | Images | Videos | Voices | Characters | …).
+  // Characters live in their own category and are not listed under `All` (report §2), so a
+  // character attach must switch the rail first. Fails closed when the category is not there.
+  async function selectPickerCategory(label) {
+    const items = await waitFor(() => {
+      const p = picker();
+      if (!p) return null;
+      const found = $$('mat-list-item, [role=tab], li, button, [role=button]', p)
+        .filter((el) => visibleText(el) === label && !el.matches('.asset-item, [role=option]'));
+      return found.length ? found : null;
+    }, { what: `the picker category "${label}"`, timeoutMs: ATTACH_WAIT_MS });
+    if (items.length > 1) throw new Error(`Several picker categories read "${label}"; cannot tell which to open`);
+    if (items[0].getAttribute('aria-selected') === 'true') return;
+    if (!clickable(items[0])) throw new Error(`The picker category "${label}" is not clickable`);
+    items[0].click();
+    // The tile appears only once the category is applied; selectInPicker waits for it, so a rail
+    // click that did not land fails the job instead of attaching the wrong thing.
   }
 
   // Some pickers attach on the tile click and close; others keep a final "Add to prompt". Click it
@@ -235,7 +287,24 @@
   async function attachReferences(input, references) {
     const names = references?.names ?? {};
     const nameFor = (id) => names[id] ?? id;
+    const characterTokens = {};
     try {
+      // A Flow Character goes through the same picker, under its own category (report §3b). It has
+      // no media id, so the tile's thumbnail token is captured here and compared with the chip by
+      // the pre-spend check: that comparison is the only proof the right character was attached.
+      if (input !== 'frames') {
+        for (const character of references?.characters ?? []) {
+          await openPicker();
+          await selectPickerCategory(CHARACTER_CATEGORY);
+          const tile = await selectInPicker(character.name);
+          const token = asbToken($('img', tile));
+          if (!token) throw new Error(`The picker tile for the character "${character.name}" has no thumbnail, so its chip could not be verified`);
+          confirmIfPresent();
+          await waitFor(() => !picker(), { what: 'the picker to close after attaching the character' }).catch(() => {});
+          await waitFor(() => characterChipTokens().includes(token), { what: `the character chip for "${character.name}" to appear attached`, timeoutMs: ATTACH_WAIT_MS });
+          characterTokens[character.name] = token;
+        }
+      }
       if (input === 'frames') {
         for (const which of ['firstFrame', 'lastFrame']) {
           const id = references?.[which];
@@ -251,7 +320,7 @@
           // (which reads attached ids) does not run before the reference is on the page.
           await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: ATTACH_WAIT_MS });
         }
-        return;
+        return characterTokens;
       }
       for (const id of references?.ingredients ?? []) {
         await openPicker();
@@ -260,6 +329,7 @@
         await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
         await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: ATTACH_WAIT_MS });
       }
+      return characterTokens;
     } finally {
       await closePicker().catch(() => {});
     }
@@ -374,9 +444,10 @@
     // (same picker, same read-back). Attaching in Image mode can route Flow into its image editor;
     // when that happens the page's URL changes and the pre-spend check refuses before any click, so
     // nothing is ever submitted from the wrong screen.
+    let characterTokens = {};
     if (job.references) {
       try {
-        await attachReferences(s.kind === 'video' ? s.input : 'ingredients', job.references);
+        characterTokens = await attachReferences(s.kind === 'video' ? s.input : 'ingredients', job.references) ?? {};
       } catch (e) {
         if (e instanceof Halt) return { ...readPage(), halt: e.message };
         throw e;
@@ -386,8 +457,11 @@
       }
     }
     const after = readPage();
-    // What is actually attached now, read back by media id for the pre-spend check.
+    // What is actually attached now, read back by media id (and by character thumbnail token) for
+    // the pre-spend check, plus the mention chips and the token each character's picker tile showed.
     after.attached = readAttached(s.kind === 'video' ? s.input : 'ingredients');
+    after.characterTokens = characterTokens;
+    after.mentions = readMentions();
     // Mode radios, model and cost are only visible with the panel open; the rest is read after closing.
     return { ...after, input: withPanel.input, costText: withPanel.costText, model };
   }

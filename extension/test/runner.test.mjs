@@ -33,18 +33,22 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
       return { ok: false, kind: 'rpc-error', message: 'unexpected' };
     },
   };
+  // A Flow Character has no media id in the DOM: its chip and its picker tile are matched by the
+  // /asb/ thumbnail token (report §4). The fake mirrors the real driver — the tile token it read
+  // during the attach, and the same token on the chip it left in the bar.
+  const tokensOf = (references) => (references?.characters ?? []).map((c) => `asb-${c.entityId}`);
   const driver = {
     async prepare(job) {
       log.push(`prepare:${job.name}`);
-      // A real driver attaches job.references in the composer; the fake reports them back as
-      // attached, so the pre-spend reference check sees a faithful composer unless overridden.
       const attached = attachedOverride ?? (job.references
-        ? { ingredients: job.references.ingredients ?? [], firstFrame: job.references.firstFrame ?? null, lastFrame: job.references.lastFrame ?? null }
-        : { ingredients: [], firstFrame: null, lastFrame: null });
+        ? { ingredients: job.references.ingredients ?? [], firstFrame: job.references.firstFrame ?? null, lastFrame: job.references.lastFrame ?? null, characters: tokensOf(job.references) }
+        : { ingredients: [], firstFrame: null, lastFrame: null, characters: [] });
+      const characterTokens = Object.fromEntries((job.references?.characters ?? []).map((c) => [c.name, `asb-${c.entityId}`]));
       return {
         tabId: 7, url: `https://flow.google.com/project/${PID}`, prompt: job.prompt,
         summary: { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 },
-        input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false, attached, ...page,
+        input: 'ingredients', model: 'Omni 1.1 Flash', cost: 4, generateEnabled: true, overlayOpen: false, attached,
+        characterTokens, mentions: [], ...page,
       };
     },
     async clickGenerate() { log.push('click'); return { ok: true }; },
@@ -57,10 +61,12 @@ function fakeWorld({ page = {}, media = [], detail = {}, bytes = MP4, blocked = 
     if (world.resolveError) throw world.resolveError;
     const id = (r) => (r.kind === 'mediaId' ? r.mediaId : `uploaded-${r.path.replace(/\W+/g, '-')}`);
     const plan = job.referencePlan;
+    const characters = (plan.characters ?? []).map((c) => ({ entityId: c.entityId, name: c.name }));
     return {
       ingredients: (plan.ingredients ?? []).map(id),
       firstFrame: plan.firstFrame ? id(plan.firstFrame) : null,
       lastFrame: plan.lastFrame ? id(plan.lastFrame) : null,
+      ...(characters.length ? { characters } : {}),
     };
   };
   const refs = { resolve };
@@ -401,6 +407,21 @@ test('an Ingredients job resolves its references, attaches them, passes the chec
   await runner.tick();
   assert.ok(world.log.includes('resolve:a'));
   assert.ok(world.log.indexOf('resolve:a') < world.log.indexOf('prepare:a')); // resolve before prepare
+
+// A character-only job has no photo reference at all, yet it must resolve (that is what records the
+// character on the job) and submit: the chip is the reference (report §8.1 step 3, 8.4).
+test('a character-only job resolves its character and submits through the ordinary path', async () => {
+  const { store, world, runner } = await setup();
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const job = await approved(store, 'char', { referencePlan: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [char] } });
+  await runner.tick();
+  assert.ok(world.log.includes('resolve:char'));
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'submitted');
+  assert.deepEqual(after.references.characters, [char]);
+  assert.equal((await store.session()).spent, 4);
+});
   assert.ok(world.log.includes('click'));
   const after = await store.get(job.id);
   assert.equal(after.state, 'submitted');
