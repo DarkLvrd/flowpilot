@@ -39,6 +39,25 @@ test('a job walks the happy path and its state survives a new store on the same 
   assert.deepEqual((await reopened.session()).spent, 4);
 });
 
+test('a match records whether Flow confirmed a Flow Character, without moving the state machine', async () => {
+  const { store } = await storeWithCap();
+  const { id } = await store.add(spec);
+  await store.apply(id, { type: 'approve' });
+  await store.apply(id, { type: 'start', tabId: 7 });
+  await store.apply(id, { type: 'clicked', at: 1000, cost: 4 });
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const matched = await store.apply(id, { type: 'matched', mediaId: 'm1', characterUsed: char });
+  assert.equal(matched.state, 'rendering');
+  assert.deepEqual(matched.characterUsed, char);
+  assert.equal(matched.cost, 4); // review metadata, like `references`: the spend does not move
+  // A job that never asked for a character is not spoken for on an ordinary match.
+  const plain = await store.add(spec);
+  await store.apply(plain.id, { type: 'approve' });
+  await store.apply(plain.id, { type: 'start', tabId: 7 });
+  await store.apply(plain.id, { type: 'clicked', at: 1000, cost: 4 });
+  assert.equal('characterUsed' in await store.apply(plain.id, { type: 'matched', mediaId: 'm2' }), false);
+});
+
 test('illegal transitions are refused and change nothing', async () => {
   const { store } = await storeWithCap();
   const { id } = await store.add(spec);

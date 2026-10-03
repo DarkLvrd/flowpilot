@@ -88,6 +88,25 @@ test('the panel lists finished clips only, with the six checks, the verdict, the
   assert.equal(sent.length, 0); // rendering a panel never writes and never queues
 });
 
+// Report §8.1 step 5: the card states the character from the generation's own record — or says
+// plainly that it was not confirmed — and never lets the picture stand in for the data.
+test('the card cites a verified character, and says so when the record did not confirm one', () => {
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const confirmed = {
+    ...fresh, id: 'ffff0000-0000-4000-8000-00000000000a', name: 'scene_8',
+    referencePlan: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [char] },
+    characterUsed: char,
+    qc: { checkedAt: 1, by: 'human', checks: checks(), verdict: 'approved', note: null, characterUsed: char },
+  };
+  const unconfirmed = { ...confirmed, id: 'ffff0000-0000-4000-8000-00000000000b', name: 'scene_9', characterUsed: null, qc: { checkedAt: 1, by: 'human', checks: checks(), verdict: 'approved', note: null, characterUsed: null } };
+  const root = node();
+  createReviewPanel(root, { onChange: () => {} }).render([confirmed, unconfirmed]);
+  assert.match(text(root.children[0]), /character nancy: ✅ verified in the generation record/);
+  assert.match(text(root.children[0]), /0bfec740-409e-42f5-80d1-82baac3349f3/);
+  assert.match(text(root.children[1]), /character nancy: ⚠️ not confirmed in the generation record/);
+  assert.doesNotMatch(text(root.children[1]), /verified/);
+});
+
 test('recording a verdict sends the five checks and the note; nothing is written before the click', async () => {
   sent.length = 0;
   let refreshed = 0;

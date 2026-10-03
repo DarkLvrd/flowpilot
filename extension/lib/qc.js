@@ -177,9 +177,12 @@ export function technicalCheck(job = {}) {
   return { check: 'technical', result: problems.length ? 'fail' : 'pass', problems };
 }
 
-// The record, exactly the five fields the design stores (report §2.6): checkedAt, by, the six
-// checks, the verdict and the note. `technical` is filled in from the job — never taken on trust —
-// and a caller that states it anyway must agree with the automatic result.
+// The record: the design's five fields (report §2.6 — checkedAt, by, the six checks, the verdict,
+// the note) plus `characterUsed`, which the character work adds so the Review card can say a Flow
+// Character was used from the generation's own record instead of guessing from the picture (report
+// §8.1 step 5). `technical` is filled in from the job — never taken on trust — and a caller that
+// states it anyway must agree with the automatic result; `characterUsed` is read from the job the
+// same way, so it cannot be talked up by whoever records the verdict.
 export function buildQcRecord({ job = {}, checks = {}, by = 'human', note = null, at = Date.now(), policy = QC_POLICY } = {}) {
   if (!QC_WHO.includes(by)) throw new Error(`Who checked a job must be one of ${QC_WHO.join(' or ')}, got ${JSON.stringify(by)}`);
   const automatic = technicalCheck(job).result;
@@ -189,8 +192,21 @@ export function buildQcRecord({ job = {}, checks = {}, by = 'human', note = null
   const merged = { technical: automatic };
   for (const check of QC_VISIBLE) merged[check] = checks[check];
   const { verdict } = qcVerdict(merged, policy, { note });
-  return { checkedAt: at, by, checks: merged, verdict, note: note == null ? null : String(note) };
+  return { checkedAt: at, by, checks: merged, verdict, note: note == null ? null : String(note), characterUsed: normalizeCharacterUsed(job.characterUsed) };
 }
+
+// `{ entityId, name }` when Flow's own record confirmed the character, or null — including null for
+// a job that never asked for one. A malformed value is refused rather than stored: the Review card
+// must never print "verified" from data that cannot be trusted.
+function normalizeCharacterUsed(used) {
+  if (used == null) return null;
+  if (typeof used !== 'object' || Array.isArray(used)) throw new Error('characterUsed must be the character Flow confirmed, or null');
+  if (!CHARACTER_ID.test(String(used.entityId ?? ''))) throw new Error('characterUsed needs the Flow entity id Flow confirmed');
+  if (used.name != null && typeof used.name !== 'string') throw new Error('characterUsed.name must be text');
+  return { entityId: used.entityId, name: used.name ?? null };
+}
+
+const CHARACTER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The parts a fix appends to. A job composed from the library already carries them; a plain job has
 // only its prompt text, which becomes the base part verbatim (kind "base", exactly what the composer
@@ -270,6 +286,7 @@ export function validateQcRecord(qc) {
   if (!QC_WHO.includes(qc.by)) throw new Error(`Who checked a job must be one of ${QC_WHO.join(' or ')}, got ${JSON.stringify(qc.by)}`);
   if (!QC_VERDICTS.includes(qc.verdict)) throw new Error(`A QC verdict must be one of ${QC_VERDICTS.join(', ')}, got ${JSON.stringify(qc.verdict)}`);
   if (qc.note != null && typeof qc.note !== 'string') throw new Error('A QC note must be text or null');
+  if (qc.characterUsed !== undefined) normalizeCharacterUsed(qc.characterUsed);
   const { verdict } = qcVerdict(qc.checks);
   if (verdict !== qc.verdict) throw new Error(`The QC record says "${qc.verdict}" but its checks say "${verdict}"`);
   return true;

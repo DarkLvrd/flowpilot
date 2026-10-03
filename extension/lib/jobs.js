@@ -65,6 +65,11 @@ export function transition(job, event, session, now = Date.now()) {
       next.cost = event.cost;
       break;
     case 'matched':
+      next.mediaId = event.mediaId;
+      // Report §5: whether the finished generation really used the Flow Character, read from the
+      // record Flow itself returns. Metadata, exactly like `references` — no state change.
+      if (event.characterUsed !== undefined) next.characterUsed = event.characterUsed;
+      break;
     case 'ready':
       next.mediaId = event.mediaId;
       break;

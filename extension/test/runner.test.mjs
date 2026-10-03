@@ -408,6 +408,43 @@ test('an Ingredients job resolves its references, attaches them, passes the chec
   assert.ok(world.log.includes('resolve:a'));
   assert.ok(world.log.indexOf('resolve:a') < world.log.indexOf('prepare:a')); // resolve before prepare
 
+// Report §5: the finished job's own record says whether the character was really used. The engine
+// records it from the record it already fetches, so QC states a fact instead of guessing.
+test('a character job records characterUsed from its own generation record', async () => {
+  const { store, world, runner } = await setup();
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const a = await approved(store, 'a', { referencePlan: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [char] } });
+  await store.apply(a.id, { type: 'start', tabId: 7 });
+  await store.apply(a.id, { type: 'clicked', at: NOW - 10_000, cost: 4 });
+
+  const MID = '11111111-1111-1111-1111-111111111111';
+  const WID = '22222222-2222-2222-2222-222222222222';
+  // The mention form the report captured: [full prompt text, null, [[mention node, text after it]]]
+  const promptContent = [['prompt a', null, [[[null, [null, null, [char.entityId, 'nancy']]], ' a']]]];
+  world.server.media = [null, [[WID, null, null, ['prompt a', [1_790_569_695, 0], null, null, MID], PID]],
+    [[MID, PID, WID, 'CAE', null, [[1_790_569_695, 0], 'prompt a', null, null, null, 'thumb',
+      [null, [['abra_r2v_4s_360p', 3, [5], null, 2, 4], []], promptContent, [null, [[char.entityId]]], 1]]]]];
+  await runner.tick();
+  assert.deepEqual((await store.get(a.id)).characterUsed, { entityId: char.entityId, name: 'nancy' });
+});
+
+test('a character job whose record shows no character records characterUsed: null', async () => {
+  const { store, world, runner } = await setup();
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const a = await approved(store, 'a', { referencePlan: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [char] } });
+  await store.apply(a.id, { type: 'start', tabId: 7 });
+  await store.apply(a.id, { type: 'clicked', at: NOW - 10_000, cost: 4 });
+  const MID = '11111111-1111-1111-1111-111111111111';
+  const WID = '22222222-2222-2222-2222-222222222222';
+  // The prompt matched but the record carries no mention and no entity reference: Flow sent text.
+  world.server.media = [null, [[WID, null, null, ['a', [1_790_569_695, 0], null, null, MID], PID]],
+    [[MID, PID, WID, 'CAE', null, [[1_790_569_695, 0], 'prompt a', null, null, null, 'thumb',
+      [null, [['abra_r2v_4s_360p', 3, [5], null, 2, 4], []], [[null, null, [[['prompt a']]]]], null, 1]]]]];
+  await runner.tick();
+  assert.equal((await store.get(a.id)).state, 'rendering');
+  assert.equal((await store.get(a.id)).characterUsed, null);
+});
+
 // A character-only job has no photo reference at all, yet it must resolve (that is what records the
 // character on the job) and submit: the chip is the reference (report §8.1 step 3, 8.4).
 test('a character-only job resolves its character and submits through the ordinary path', async () => {

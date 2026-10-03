@@ -17,7 +17,7 @@
 //              to halt everything. Only called for jobs that have references.
 
 import { RPC } from './rpc.js';
-import { parseProjectMedia, parseMediaDetail, findResult } from './media.js';
+import { parseProjectMedia, parseMediaDetail, characterUsed, findResult } from './media.js';
 import { checkBeforeSpend } from './preflight.js';
 import { acceptDownload, EXTENSION } from './magic.js';
 
@@ -73,7 +73,11 @@ export function createRunner({ store, flow, driver, files, workTab, refs, settin
           continue;
         }
         claimed.push(hit.mediaId);
-        job = await store.apply(job.id, { type: 'matched', mediaId: hit.mediaId });
+        // The job's own record says whether the character was really used (report §5): recorded
+        // here, from the response Flow Pilot already reads, so QC states a fact, not a guess.
+        const expected = job.references?.characters ?? job.referencePlan?.characters ?? [];
+        const used = expected.length ? characterUsed(hit, expected) : null;
+        job = await store.apply(job.id, { type: 'matched', mediaId: hit.mediaId, ...(expected.length ? { characterUsed: used } : {}) });
       }
       const detail = await rpc('mediaDetail', [job.mediaId]);
       if (detail.ok && readyUrl(detail.data, job.settings.kind)) {

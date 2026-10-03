@@ -181,6 +181,7 @@ test('buildQcRecord fills technical in itself, derives the verdict and refuses a
     checks: { technical: 'pass', identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' },
     verdict: 'regen',
     note: 'flat bronze',
+    characterUsed: null,
   });
   assert.equal(buildQcRecord({ job: doneVideo(), checks: Object.fromEntries(QC_VISIBLE.map((c) => [c, 'pass'])), at }).verdict, 'approved');
   // A caller may state technical, but only in agreement with the automatic result.
@@ -204,8 +205,26 @@ test('a record is validated before it is stored: the design\'s five fields and n
   assert.throws(() => validateQcRecord({ ...good, checks: { ...good.checks, style: 'meh' } }), /style/);
   assert.throws(() => validateQcRecord({ ...good, note: 7 }), /note/);
   assert.throws(() => validateQcRecord(null), /record/i);
-  // The stored record has exactly the design's fields.
-  assert.deepEqual(Object.keys(good).sort(), ['by', 'checkedAt', 'checks', 'note', 'verdict']);
+  // The stored record has exactly the design's five fields plus `characterUsed`, which the character
+  // work adds so the Review card can cite Flow's own record instead of guessing from the picture.
+  assert.deepEqual(Object.keys(good).sort(), ['by', 'characterUsed', 'checkedAt', 'checks', 'note', 'verdict']);
+});
+
+// Report §8.1 step 5: the QC record states whether the character was really used, from the record
+// Flow itself returned for the finished job — never from a person's say-so or the look of the clip.
+test('the QC record cites the character Flow confirmed, and refuses one that is not a real id', () => {
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const checks = Object.fromEntries(QC_VISIBLE.map((c) => [c, 'pass']));
+  const used = buildQcRecord({ job: { ...doneVideo(), characterUsed: char }, checks, at: 1 });
+  assert.deepEqual(used.characterUsed, char);
+  // A job that asked for a character but whose record did not confirm it says so plainly.
+  assert.equal(buildQcRecord({ job: { ...doneVideo(), characterUsed: null }, checks, at: 1 }).characterUsed, null);
+  // A job with no character is not spoken for.
+  assert.equal(buildQcRecord({ job: doneVideo(), checks, at: 1 }).characterUsed, null);
+  // The value comes from the job, so a caller cannot talk it up; a malformed one never lands.
+  assert.throws(() => buildQcRecord({ job: { ...doneVideo(), characterUsed: { name: 'nancy' } }, checks, at: 1 }), /entity id/i);
+  assert.throws(() => validateQcRecord({ ...used, characterUsed: { entityId: 'nancy', name: 'nancy' } }), /entity id/i);
+  assert.throws(() => validateQcRecord({ ...used, characterUsed: 'nancy' }), /characterUsed/i);
 });
 
 test('a fix for a clip that is not part of a shot is a new job from the same spec, never an edit', () => {

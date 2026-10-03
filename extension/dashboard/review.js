@@ -77,6 +77,16 @@ export function createReviewPanel(root, { onChange = () => {} } = {}) {
     if (job.file?.path) row.append(el('div', { textContent: job.file.path, style: 'font-size:11px;color:#5f6368' }));
     row.append(el('div', { textContent: `prompt: ${(job.prompt ?? '').split('\n')[0].slice(0, 160)}`, style: 'font-size:11px;color:#5f6368' }));
 
+    // The Flow Character line (report §8.1 step 5): verified from the finished job's own record, or
+    // said plainly as unconfirmed — never guessed from the picture.
+    const expectedCharacters = job.references?.characters ?? job.referencePlan?.characters ?? [];
+    if (job.qc?.characterUsed) {
+      const used = job.qc.characterUsed;
+      row.append(el('div', { textContent: ` character ${used.name ?? used.entityId}: ✅ verified in the generation record (${used.entityId})`, style: 'font-size:13px;color:#1e8e3e' }));
+    } else if (expectedCharacters.length) {
+      row.append(el('div', { textContent: ` character ${expectedCharacters.map((c) => c.name ?? c.entityId).join(', ')}: ⚠️ not confirmed in the generation record — check this clip by eye`, style: 'font-size:13px;color:#b06000' }));
+    }
+
     // The automatic check first, in plain words. It never decides anything by itself.
     const auto = job.qc?.checks?.technical ?? null;
     row.append(el('div', { style: 'font-size:13px' },
