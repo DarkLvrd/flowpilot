@@ -226,10 +226,12 @@
     return { ok: true };
   }
 
-  // Attaches already-in-project references to the composer for the job's input mode. The mode radios
-  // must already be set to Video + Ingredients/Frames (attaching in Image mode opens the out-of-scope
-  // image editor — recon 2026-10-01). References carry a `names` map (media id → tile name) because
-  // the picker grid shows no id. Closes the picker in every case so a failure never leaves it open.
+  // Attaches already-in-project references to the composer for the job's input mode. The Video mode
+  // radios must already be set to Ingredients/Frames before attaching (in Image mode Flow's grid can
+  // route a selection into the out-of-scope image editor — recon 2026-10-01), and an image job's
+  // Ingredients go through the same asset picker. References carry a `names` map (media id → tile
+  // name) because the picker grid shows no id. Closes the picker in every case so a failure never
+  // leaves it open.
   async function attachReferences(input, references) {
     const names = references?.names ?? {};
     const nameFor = (id) => names[id] ?? id;
@@ -368,14 +370,19 @@
     const withPanel = readPage();
     const model = visibleText(button(NAMES.model)) || null;
     await closeSettings();
-    // Attach references once the mode is Video + Ingredients/Frames (attaching in Image mode opens
-    // the out-of-scope image editor). References were resolved to media ids by the engine first.
-    if (s.kind === 'video' && job.references) {
+    // Attach references once the mode is set: a video's Ingredients/Frames, or an image's Ingredients
+    // (same picker, same read-back). Attaching in Image mode can route Flow into its image editor;
+    // when that happens the page's URL changes and the pre-spend check refuses before any click, so
+    // nothing is ever submitted from the wrong screen.
+    if (job.references) {
       try {
-        await attachReferences(s.input, job.references);
+        await attachReferences(s.kind === 'video' ? s.input : 'ingredients', job.references);
       } catch (e) {
         if (e instanceof Halt) return { ...readPage(), halt: e.message };
         throw e;
+      }
+      if (s.kind === 'image' && readPage().url !== `https://flow.google.com/project/${job.projectId}`) {
+        throw new Error("Attaching an image reference left Flow's project page (the image editor opened); the job was not submitted");
       }
     }
     const after = readPage();

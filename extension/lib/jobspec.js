@@ -35,18 +35,24 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
     if ((spec.refs?.length ?? 0) > 0) throw new Error('A still preview uses Frames, not ingredient references');
     if (spec.firstFrame != null) throw new Error('A still preview builds the first frame from the still; do not give a first frame');
   }
-  const hasRefFields = (spec.refs?.length ?? 0) > 0 || spec.firstFrame != null || spec.lastFrame != null;
-  if (kind !== 'video' && hasRefFields) {
-    throw new Error('References (Ingredients and Frames) are for video jobs; image reference support is not wired yet');
+  const hasFrameFields = spec.firstFrame != null || spec.lastFrame != null;
+  const hasIngredientFields = (spec.refs?.length ?? 0) > 0;
+  // Image jobs take Ingredients (1-3 reference photos) exactly like a video job; Frames stay a
+  // video mode (there is no first/last frame for a still). Both go through validateReferences, so
+  // an image reference gets the same caps, dedup and media-id/path classification as a video's.
+  if (kind !== 'video' && hasFrameFields) {
+    throw new Error('Frames (a first/last frame) are for video jobs; an image job takes Ingredients references (--ref) instead');
   }
   // Infer the input when it isn't named: a frame field means Frames, references mean Ingredients,
   // otherwise plain text. validateReferences throws a clear error on a bad reference.
-  const rawInput = holdFirstFrame ? 'frames' : (spec.input ?? (spec.firstFrame != null || spec.lastFrame != null ? 'frames' : (spec.refs?.length ? 'ingredients' : 'text')));
+  const rawInput = holdFirstFrame ? 'frames' : (spec.input ?? (hasFrameFields ? 'frames' : (hasIngredientFields ? 'ingredients' : 'text')));
   const referencePlan = kind === 'video'
     ? (holdFirstFrame
         ? { input: 'frames', ingredients: [], firstFrame: null, lastFrame: spec.lastFrame == null || spec.lastFrame === '' ? null : classifyRef(spec.lastFrame) }
         : validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame }))
-    : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null };
+    : (hasIngredientFields
+        ? validateReferences({ input: 'ingredients', refs: spec.refs })
+        : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null });
 
   const durationS = Number(spec.durationS ?? 4);
   if (kind === 'video' && !Number.isFinite(durationS)) throw new Error(`Unsupported duration: ${JSON.stringify(spec.durationS)}; Flow offers 4, 6, 8 or 10 s`);
@@ -109,6 +115,23 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
       throw new Error('A job\'s promptParts must be composed prompt parts (kind, ref, sha256, text)');
     }
     composed.promptParts = spec.promptParts;
+  }
+  // `anchor` is the approval a shot-built video was created from (report §2.7): metadata only, so
+  // the job can always be traced to the still a person approved. Media ids only, never paths.
+  if (spec.anchor != null) {
+    const media = (v, what) => {
+      const ref = classifyRef(v);
+      if (ref.kind !== 'mediaId') throw new Error(`A job's anchor ${what} must be a Flow media id, never a path`);
+      return ref.mediaId;
+    };
+    if (typeof spec.anchor?.shotId !== 'string' || spec.anchor.shotId === '') throw new Error("A job's anchor must name the shot it came from (shotId)");
+    if (spec.anchor.startFrameMediaId == null) throw new Error("A job's anchor needs the approved still's media id (startFrameMediaId)");
+    composed.anchor = {
+      shotId: spec.anchor.shotId,
+      startFrameMediaId: media(spec.anchor.startFrameMediaId, 'startFrameMediaId'),
+      endFrameMediaId: spec.anchor.endFrameMediaId == null ? null : media(spec.anchor.endFrameMediaId, 'endFrameMediaId'),
+      approvedAt: spec.anchor.approvedAt ?? null,
+    };
   }
   return {
     name, projectId, prompt, settings, referencePlan, references: null, recipe,

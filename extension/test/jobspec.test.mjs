@@ -33,7 +33,32 @@ test('an image job is priced from the image recipe (free today) and takes no ref
   assert.equal(job.recipe, 'GEM_PIX_2');
   assert.equal(job.expectedCost, 0);
   assert.equal(job.settings.kind, 'image');
-  assert.throws(() => build({ kind: 'image', refs: ['/pics/face.png'] }), /video/i);
+  assert.equal(job.referencePlan.input, 'text');
+});
+
+test('an image job takes Ingredients (1-3 reference photos) through the same validation as a video', () => {
+  const ids = ['aaaaaaaa-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000002', 'cccccccc-0000-4000-8000-000000000003'];
+  const job = build({ kind: 'image', input: undefined, resolution: undefined, durationS: undefined, refs: ids.slice(0, 2) });
+  assert.equal(job.settings.kind, 'image');
+  assert.equal(job.settings.input, 'ingredients');
+  assert.equal(job.referencePlan.input, 'ingredients');
+  assert.deepEqual(job.referencePlan.ingredients, ids.slice(0, 2).map((mediaId) => ({ kind: 'mediaId', mediaId })));
+  assert.equal(job.expectedCost, 0); // still free
+  // A path is classified exactly as it is for a video, and the cap is Flow's three.
+  assert.equal(build({ kind: 'image', resolution: undefined, durationS: undefined, refs: ['/pics/face.png'] }).referencePlan.ingredients[0].path, '/pics/face.png');
+  assert.throws(() => build({ kind: 'image', resolution: undefined, durationS: undefined, refs: [...ids, 'dddddddd-0000-4000-8000-000000000004'] }), /at most 3/i);
+  assert.throws(() => build({ kind: 'image', resolution: undefined, durationS: undefined, refs: [ids[0], ids[0]] }), /duplicate/i);
+  // Frames stay a video mode: a still has no start/end frame.
+  assert.throws(() => build({ kind: 'image', resolution: undefined, durationS: undefined, firstFrame: '/pics/start.png' }), /video/i);
+});
+
+test('a shot-built video carries its anchor, media-id only', () => {
+  const mediaId = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const job = build({ firstFrame: mediaId, anchor: { shotId: 'shot_4', startFrameMediaId: mediaId, endFrameMediaId: null, approvedAt: 42 } });
+  assert.deepEqual(job.anchor, { shotId: 'shot_4', startFrameMediaId: mediaId, endFrameMediaId: null, approvedAt: 42 });
+  assert.throws(() => build({ firstFrame: mediaId, anchor: { shotId: '', startFrameMediaId: mediaId } }), /shotId/i);
+  assert.throws(() => build({ firstFrame: mediaId, anchor: { shotId: 'shot_4' } }), /startFrameMediaId/i);
+  assert.throws(() => build({ firstFrame: mediaId, anchor: { shotId: 'shot_4', startFrameMediaId: '/pics/still.png' } }), /media id/i);
 });
 
 test('the prompt is trimmed and CRLF-normalized; an empty prompt is refused', () => {

@@ -109,7 +109,7 @@ test('a CSV batch plans rows and applies the naming template with a zero-padded 
 test('one bad row fails only itself and is reported per row, never skipped silently', () => {
   const p = plan(JSON.stringify([
     { scene: 'good', prompt: 'a red fox', resolution: '360p', duration: 4 },
-    { scene: 'bad', kind: 'image', prompt: 'x', refs: ['/pics/face.png'] },
+    { scene: 'bad', kind: 'image', prompt: 'x', firstFrame: '/pics/face.png' },
     { scene: 'noprompt' },
   ]));
   assert.equal(p.anyError, true);
