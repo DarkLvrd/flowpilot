@@ -23,12 +23,15 @@ export function saveKey(p, key) {
 
 export function createClient({ port, key }) {
   const base = `http://127.0.0.1:${port}`;
+  // `key` may be a function so a long-lived server (the MCP one) picks up a key paired after it started.
+  const keyOf = () => (typeof key === 'function' ? key() : key);
   async function call(method, path, body) {
+    const bearer = keyOf();
     let res;
     try {
       res = await fetch(base + path, {
         method,
-        headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(40_000),
       });

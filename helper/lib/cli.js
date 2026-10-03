@@ -21,7 +21,8 @@ const USAGE = `Usage: flowpilot <command>
       [--last-frame REF]        Frames: the end photo; the video is generated in between
   approve|cancel|requeue|retry-download <id>
   doctor                    Check the setup
-  mcp                       Run as an MCP server on stdio
+  mcp                       Run as an MCP server on stdio (starts the helper itself if it is not
+                            already running, and stops only the one it started)
 
 Add --json to print raw JSON. The credit cap, clearing a halt and the work tab are dashboard-only.`;
 
@@ -35,7 +36,7 @@ const OPTIONS = {
 
 class Usage extends Error {}
 
-export async function main(argv, { env = process.env, out = console.log, err = console.error } = {}) {
+export async function main(argv, { env = process.env, out = console.log, err = console.error, input = process.stdin, output = process.stdout } = {}) {
   let args;
   try {
     args = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
@@ -55,7 +56,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
   try {
     switch (cmd) {
       case 'serve': return await serve(p, out, { forgetExtension: o['forget-extension'] });
-      case 'mcp': { const { runMcp } = await import('./mcp.js'); await runMcp({ client: client() }); return 0; }
+      case 'mcp': return await mcp(p, env, err, { input, output });
       case 'pair': {
         if (!rest[0]) throw new Usage('pair needs the code from the dashboard');
         saveKey(p, await client().pair(rest[0], o.name ?? 'cli'));
@@ -86,6 +87,35 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     err(e.message);
     return 1;
   }
+}
+
+async function mcp(p, env, err, { input, output } = {}) {
+  const { runMcp } = await import('./mcp.js');
+  const { createAutoStart } = await import('./autostart.js');
+  // One owner per helper: `ensure` reuses a helper already on the port and only ever starts (and
+  // later stops) one of its own, so an MCP server never fights `flowpilot serve` or another one.
+  const helper = createAutoStart({ port: p.port, env, log: (m) => err(`[helper] ${m}`) });
+  const real = createClient({ port: p.port, key: () => readKey(p) });
+  const withHelper = async (fn) => { await helper.ensure(); return fn(real); };
+  const client = {
+    health: () => withHelper(() => real.health()),
+    pair: (code, name) => withHelper(() => real.pair(code, name)),
+    status: () => withHelper(() => real.status()),
+    job: (id) => withHelper(() => real.job(id)),
+    add: (spec) => withHelper(() => real.add(spec)),
+    act: (id, action) => withHelper(() => real.act(id, action)),
+  };
+  const onSignal = () => { helper.stopNow(); process.exit(0); };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  try {
+    await runMcp({ client, input, output });
+  } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    await helper.stop();
+  }
+  return 0;
 }
 
 async function serve(p, out, { forgetExtension = false } = {}) {
