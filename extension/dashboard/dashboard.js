@@ -1,5 +1,5 @@
 // Dashboard: cap, halt, agents, storyboard/batch import, presets, the folder picker, the queue,
-// the front-tab rule and the Flow health screen.
+// preview-first, the front-tab rule and the Flow health screen.
 import { send, renderChecks, frontTabNotice } from '../ui.js';
 import { FLOW_CHANGED_HINT } from '../lib/health.js';
 import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.js';
@@ -18,8 +18,28 @@ let grantedFolderName = null; // the name of the folder granted for this session
 // A job that is not finished: with no work tab, these are the jobs a person is waiting on.
 const ACTIVE_STATES = ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading', 'awaiting-preview'];
 
-const stateText = (j) => j.state + (j.error ? ` — ${j.error}` : '') + (j.file ? ` → ${j.file.path}` : '');
-const costText = (j) => j.cost ?? (j.expectedCost == null ? '?' : `~${j.expectedCost}`);
+// What a row's state cell says. A held video names its free still, so "waiting" is never a mystery;
+// the still's own row says what it is.
+function stateText(job, byId) {
+  if (job.state === 'awaiting-preview') {
+    const still = job.previewJobId ? byId.get(job.previewJobId) : null;
+    const stillState = !still ? 'its free still is missing'
+      : still.state === 'failed' ? `the free still failed — ${still.error ?? 'see its row'}`
+      : still.state === 'done' ? `free still ready (${still.mediaId ?? 'no media id'})`
+      : `waiting for the free still (${still.state})`;
+    return `⏳ awaiting preview — ${stillState}${job.error ? ` — ${job.error}` : ''}`;
+  }
+  const label = job.role === 'preview' ? `${job.state} (free still)` : job.state;
+  return label + (job.error ? ` — ${job.error}` : '') + (job.file ? ` → ${job.file.path}` : '');
+}
+
+// Cost is always shown; a still is unmistakably free, and a held video shows its eventual price
+// before it can be approved.
+function costText(job) {
+  if (job.cost != null) return job.cost === 0 ? '0 (free)' : String(job.cost);
+  if (job.expectedCost == null) return '?';
+  return job.expectedCost === 0 ? '0 (free)' : `~${job.expectedCost}`;
+}
 
 async function render() {
   const s = await send('status');
@@ -50,11 +70,12 @@ async function render() {
   renderPresets(presets);
   await renderFolder();
 
+  const byId = new Map(s.jobs.map((j) => [j.id, j]));
   const rows = s.jobs.slice().reverse().map((j) => {
     const tr = document.createElement('tr');
     const cell = (t) => { const td = document.createElement('td'); td.textContent = t; tr.append(td); return td; };
     cell(j.name);
-    cell(stateText(j));
+    cell(stateText(j, byId));
     cell(costText(j));
     cell(j.prompt);
     const actions = cell('');
@@ -63,7 +84,15 @@ async function render() {
       b.onclick = act(() => send(cmd, { id: j.id })); actions.append(b);
     };
     if (j.state === 'queued') btn('Approve', 'approve');
-    if (['queued', 'approved', 'halted'].includes(j.state)) btn('Cancel', 'cancel');
+    if (j.state === 'awaiting-preview') {
+      const still = j.previewJobId ? byId.get(j.previewJobId) : null;
+      const ready = still?.state === 'done' && !!still.mediaId;
+      const price = j.expectedCost == null ? 'cost shown in Flow' : `${j.expectedCost} credit${j.expectedCost === 1 ? '' : 's'}`;
+      // The one free-then-paid click: it approves the look and lets the video spend. Disabled until
+      // the still exists, and it can never run on its own.
+      btn(ready ? `Approve still → run video (${price})` : 'Approve still (still rendering)', 'promotePreview', ready);
+    }
+    if (['queued', 'approved', 'halted', 'awaiting-preview'].includes(j.state)) btn('Cancel', 'cancel');
     if (j.state === 'failed' && j.clickedAt == null && !j.mayHaveSubmitted) btn('Re-queue', 'requeue');
     if (j.state === 'failed' && j.mediaId) btn('Retry download', 'retryDownload');
     return tr;
@@ -261,11 +290,18 @@ $('add').onsubmit = act(async (ev) => {
   // References: ingredient refs one per line/comma; first/last frame single. The service worker
   // infers the input mode (Ingredients vs Frames vs plain text) and validates the references.
   const refs = (f.refs ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-  const spec = { name: f.name, prompt: f.prompt, kind: f.kind, resolution: f.resolution, durationS: Number(f.durationS), aspect: f.aspect, count: Number(f.count) };
+  const spec = { name: f.name, prompt: f.prompt, resolution: f.resolution, durationS: Number(f.durationS), aspect: f.aspect, count: Number(f.count) };
   if (refs.length) spec.refs = refs;
   if (f.firstFrame?.trim()) spec.firstFrame = f.firstFrame.trim();
   if (f.lastFrame?.trim()) spec.lastFrame = f.lastFrame.trim();
-  await send('addJob', { spec });
+  if (f.preview) {
+    // Preview-first: a free still is queued first; the video is held until that still is approved.
+    if (f.kind !== 'video') throw new Error('Preview first is for video jobs: it shows a free still of the frame the video starts from');
+    await send('previewJob', { spec });
+  } else {
+    spec.kind = f.kind;
+    await send('addJob', { spec });
+  }
   ev.target.reset();
 });
 
