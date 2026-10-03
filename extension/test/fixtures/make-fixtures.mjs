@@ -35,6 +35,37 @@ if (has('Zzl0ze')) {
   media[3] = media[3].slice(0, 2); // voice list: keep two
   out.Zzl0ze = envelope('Zzl0ze', media);
 }
+
+// The picker's tile labels (live 2026-10-03, recon/raw/live-media.mjs + live-picker.mjs): a
+// generated media's tile shows the workflow's own title, not the prompt the record stores. Four of
+// the character project's records plus the workflow nodes that title them — including two records
+// that share a title, which is why an ambiguous tile must be refused rather than guessed at.
+// Frozen here so the reader is tested against the ids and titles this account really produced.
+const liveMedia = join(here, '../../../recon/raw/media.json');
+const TITLED = [
+  'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca', // image, title "Woman in racing outfit posing"
+  'aba6cb9c-2c26-4aed-b41f-b36d13c1d751', // image, the same title
+  '53a922e2-e516-4984-bc61-f3168a7a672b', // video, title "Person in Formula One car"
+  '279f9435-8c17-42e7-9773-a81f6bd09f93', // video, title "Person standing on rooftop balcony"
+];
+if (existsSync(liveMedia)) {
+  const inner = innerOf(readFileSync(liveMedia, 'utf8'));
+  const records = [];
+  const workflows = [];
+  const walk = (node, visit) => { if (!Array.isArray(node)) return; if (visit(node) === false) return; for (const c of node) walk(c, visit); };
+  walk(inner, (node) => {
+    if (Array.isArray(node) && TITLED.includes(node[0])) {
+      records.push(node);
+      // The workflow node that titles this record lives in the same payload.
+      walk(inner, (w) => { if (Array.isArray(w) && w[0] === node[2] && Array.isArray(w[3])) workflows.push(w); return true; });
+      return false;
+    }
+    return true;
+  });
+  if (records.length === TITLED.length) {
+    out['Zzl0ze-project-titles'] = envelope('Zzl0ze', scrub([null, workflows, records, [], null, []]));
+  }
+}
 // The paid character job (2026-10-03, 4 credits): the generate response already carries the finished
 // media record, so the fixture is that record plus the project's entity list. It is the shape a
 // character video really produces — the mention-form prompt with a null first element and the

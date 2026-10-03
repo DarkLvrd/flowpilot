@@ -18,7 +18,10 @@ const SIGNED_URL = /^https:\/\/flow-content\.google\/(image|video)\/([^/?]+)\?.*
 
 const isId = (v) => typeof v === 'string' && ID.test(v);
 
-// Returns [{ mediaId, projectId, workflowId, kind, prompt, recipe, ingredientIds, createdAt }].
+// Returns [{ mediaId, projectId, workflowId, kind, title, prompt, recipe, ingredientIds, createdAt }].
+// `title` is the workflow's own title — what a picker tile is labelled with (live 2026-10-03) — and
+// `prompt` is the verbatim text Flow stored, which is what a job is tracked by. They are different
+// strings on any media Flow gave a name of its own, so neither may be used for the other's job.
 export function parseProjectMedia(inner) {
   if (!Array.isArray(inner)) throw new Error('Flow changed: project media is not a list');
   const titles = new Map();
@@ -38,6 +41,7 @@ export function parseProjectMedia(inner) {
       projectId: r[1],
       workflowId: r[2],
       kind: recipe && VIDEO_RECIPE.test(recipe) ? 'video' : 'image',
+      title: titles.get(r[2]) ?? null,
       prompt: findNestedPrompt(r) ?? titles.get(r[2]),
       recipe,
       ingredientIds: findIngredients(r),

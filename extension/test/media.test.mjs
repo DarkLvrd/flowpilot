@@ -157,6 +157,41 @@ test('a character record\'s prompt is read from the mention form, live-list and 
     [null, null, [[['plain']]], null, 1]]]]])[0].prompt, 'plain');
 });
 
+// The picker's tile labels (live 2026-10-03, project de7baa89…): a Flow-*generated* media's tile
+// shows the workflow's own title, while the record stores the verbatim prompt and Flow's own title
+// next to each other. `title` is what a picker tile can be matched by; `prompt` is what a job is
+// tracked by (findResult) — they are different strings and the readers must not confuse them.
+test('a record carries the workflow title Flow gave it, next to the prompt it really stored', () => {
+  const titled = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze-project-titles'), 'Zzl0ze').data);
+  const image = titled.find((m) => m.mediaId === 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca');
+  assert.equal(image.kind, 'image');
+  assert.equal(image.title, 'Woman in racing outfit posing'); // the tile label
+  assert.match(image.prompt, /^So I would like to create an image of an African female/); // not the label
+  const clip = titled.find((m) => m.mediaId === '53a922e2-e516-4984-bc61-f3168a7a672b');
+  assert.equal(clip.title, 'Person in Formula One car');
+  assert.match(clip.prompt, /^nancy  is in a Formula One car because/);
+  // Two records really do share one title *and* one prompt — the same still generated twice, minutes
+  // apart (1789233899 vs 1789233954). Neither the title nor the prompt can tell those two tiles
+  // apart, which is exactly why the driver refuses an ambiguous label and the pre-spend check
+  // re-reads the real media id after the attach.
+  const twins = titled.filter((m) => m.title === 'Woman in racing outfit posing');
+  assert.equal(twins.length, 2);
+  assert.notEqual(twins[0].mediaId, twins[1].mediaId);
+  assert.equal(twins[0].prompt, twins[1].prompt);
+  // A job is still matched by its prompt, never by the title Flow invented for it.
+  assert.equal(findResult(titled, { prompt: clip.title, since: 1, exclude: [] }), null);
+  assert.equal(findResult(titled, { prompt: clip.prompt, since: 1, exclude: [] })?.mediaId, clip.mediaId);
+});
+
+// The old capture's workflow text *was* the prompt, and the reader still works there: a media with
+// no separate title keeps its prompt as the only label it has.
+test('a media with no workflow title of its own has no title, not a guessed one', () => {
+  const record = parseProjectMedia([null, [], [['11111111-1111-4111-8111-111111111111', PROJECT, '22222222-2222-4222-8222-222222222222', 'CAE', null,
+    [[1_790_569_695, 0], null, [null, [[['abra_t2v_4s_360p', 1, null]]], [[null, null, [[['prompt a']]]]]]]]]]);
+  assert.equal(record[0].title, null);
+  assert.equal(record[0].prompt, 'prompt a');
+});
+
 // The paid character job (2026-10-03, 4 credits, abra_r2v_4s_360p): the real record Flow stored,
 // with the mention form whose first element is null and the entity-reference list inside the recipe
 // block. This is the shape the engine has to track and QC, so it is tested as it really is.

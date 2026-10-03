@@ -208,8 +208,9 @@
   }
 
   // A picker tile carries no media id (thumbnails are /asb/ tokens, recon 2026-10-01), so it is
-  // matched by the media's name — the prompt / uploaded filename Flow shows as the tile label, with
-  // the trailing kind word (Image/Video/…) stripped. The pre-spend check still verifies the real id.
+  // matched by the label Flow shows it under — the workflow title for a generated media, the file
+  // name for an upload (lib/refs.js referenceNames gives the candidates in that order, with the
+  // media's prompt as the fallback). The pre-spend check still verifies the real id afterwards.
   const KIND_LABELS = ['Image', 'Video', 'Audio', 'Voice', 'Avatar', 'Character'];
   const tileName = (el) => {
     const label = visibleText(el);
@@ -222,15 +223,24 @@
     return $$('button, [role=button], [role=option], [role=gridcell]', p).filter((t) => visibleText(t) === name || tileName(t) === name);
   };
 
-  // Selects the one tile named `name`; fails closed if none (times out) or several match — never
-  // guesses which media to attach when names collide. Returns the tile.
-  async function selectInPicker(name) {
-    const tiles = await waitFor(() => { const m = pickerTiles(name); return m.length ? m : null; },
-      { what: `the picker tile named "${name}"`, timeoutMs: ATTACH_WAIT_MS });
-    if (tiles.length > 1) throw new Error(`Several media are named "${name}" in the picker; cannot tell which to attach`);
-    if (!clickable(tiles[0])) throw new Error(`The picker tile named "${name}" is not clickable`);
-    tiles[0].click();
-    return tiles[0];
+  // Selects the tile for one media, whose label Flow may show anyone of several ways. Candidates are
+  // tried in order and the *first one that matches anything* decides: the tile Flow really labels
+  // this media by is not something to guess at past that point. A candidate that matches several
+  // tiles cannot identify a media (Flow gives several media the same title — live 2026-10-03, three
+  // tiles read "Woman driving Formula One car"), so the job fails instead of attaching one of them.
+  // Returns the tile so a caller can read its thumbnail token (a character chip's only handle).
+  async function selectInPicker(labels) {
+    const wanted = (Array.isArray(labels) ? labels : [labels]).filter((l) => typeof l === 'string' && l !== '');
+    if (!wanted.length) throw new Error('No name to find this media by in Flow\'s picker');
+    const hits = await waitFor(() => {
+      const found = wanted.map((label) => ({ label, tiles: pickerTiles(label) })).filter((h) => h.tiles.length > 0);
+      return found.length ? found : null;
+    }, { what: `the picker tile for ${wanted.map((l) => `"${l}"`).join(' or ')}`, timeoutMs: ATTACH_WAIT_MS });
+    const first = hits[0];
+    if (first.tiles.length > 1) throw new Error(`Several media are named "${first.label}" in the picker; cannot tell which to attach`);
+    if (!clickable(first.tiles[0])) throw new Error(`The picker tile named "${first.label}" is not clickable`);
+    first.tiles[0].click();
+    return first.tiles[0];
   }
 
   // Selects one of the picker's own categories (All | Images | Videos | Voices | Characters | …).

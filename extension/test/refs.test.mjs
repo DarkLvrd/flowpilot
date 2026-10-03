@@ -96,12 +96,32 @@ test('a Frames job refuses a character (its composer has no character chip)', ()
   assert.throws(() => validateReferences({ input: 'text', characters: [CHAR2] }), /entity id/i);
 });
 
-test('referenceNames maps media ids to their Zzl0ze names (the driver matches picker tiles by name)', () => {
+test('referenceNames gives the label the picker really shows: the workflow title, then the prompt', () => {
   const media = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze'), 'Zzl0ze').data);
   const names = referenceNames(media, [ID, ID2, 'ffffffff-ffff-4fff-8fff-ffffffffffff']);
-  assert.equal(names[ID], 'a boy on a horse');
-  assert.equal(names[ID2], 'he is riding his house');
+  // The old capture's workflow text was the prompt, so both candidates are the same label.
+  assert.deepEqual(names[ID], ['a boy on a horse']);
+  assert.deepEqual(names[ID2], ['he is riding his house']);
   assert.ok(!('ffffffff-ffff-4fff-8fff-ffffffffffff' in names)); // unknown id omitted -> driver fails closed
+});
+
+// A generated media's picker tile is labelled with the workflow title Flow wrote for it, not with
+// the prompt the record stores (live 2026-10-03, recon/FINDINGS.md "Picker tile labels"), so the
+// title is the first label to try and the prompt is the fallback (an upload lands under its file
+// name, which is also its prompt). Getting this wrong is why an approved still could never be
+// attached: the driver looked for the prompt and timed out on a tile that shows the title.
+test('a generated media is found by its workflow title, with its prompt as the fallback label', () => {
+  const media = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze-project-titles'), 'Zzl0ze').data);
+  const IMAGE = 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca';
+  const TWIN = 'aba6cb9c-2c26-4aed-b41f-b36d13c1d751';
+  const CLIP = '53a922e2-e516-4984-bc61-f3168a7a672b';
+  const names = referenceNames(media, [IMAGE, TWIN, CLIP]);
+  assert.equal(names[IMAGE][0], 'Woman in racing outfit posing');
+  assert.match(names[IMAGE][1], /^So I would like to create an image of an African female/);
+  assert.equal(names[CLIP][0], 'Person in Formula One car');
+  // Two different media really do carry one title. The candidate list still names each of them by
+  // it; refusing the ambiguity is the driver's job, and the id-equality check is the last word.
+  assert.equal(names[TWIN][0], names[IMAGE][0]);
 });
 
 test('newlyUploadedId finds the upload by its file name and image kind, else fails closed', () => {

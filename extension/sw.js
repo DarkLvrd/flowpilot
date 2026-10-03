@@ -186,8 +186,9 @@ const refs = {
     for (const ref of plan.ingredients ?? []) ingredients.push(await resolveOne(ref));
     const firstFrame = plan.firstFrame ? await resolveOne(plan.firstFrame) : null;
     const lastFrame = plan.lastFrame ? await resolveOne(plan.lastFrame) : null;
-    // The picker grid shows no media id, so the driver finds each tile by the media's name; look
-    // the names up from Zzl0ze (uploads land there under their filename).
+    // The picker grid shows no media id, so the driver finds each tile by the labels Flow shows it
+    // under — the workflow title first, the prompt as a fallback (lib/refs.js referenceNames; live
+    // 2026-10-03: a generated media's tile shows its title, an upload its file name).
     const media = await projectMediaList(tab.projectId);
     const names = referenceNames(media, [...ingredients, firstFrame, lastFrame].filter(Boolean));
     // A Flow Character needs no upload and no name lookup: Flow already holds it, the picker lists

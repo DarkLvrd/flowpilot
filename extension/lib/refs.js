@@ -95,16 +95,22 @@ export function validateReferences({ input, refs = [], firstFrame, lastFrame, ch
   throw new Error(`Unknown video input mode: ${JSON.stringify(input)}`);
 }
 
-// Maps resolved reference media ids to the names Flow shows on their picker tiles (each media's
-// prompt / uploaded filename, from Zzl0ze). The picker grid has no media id — thumbnails are /asb/
-// tokens (recon 2026-10-01) — so the driver finds a tile by this name. Ids with no known name are
+// Maps resolved reference media ids to the labels Flow shows on their picker tiles, as a *list* of
+// candidates to try in order. A generated media's tile is labelled with the workflow title Flow
+// wrote for it, not with the prompt the record keeps (live 2026-10-03: the tile for `b7df06ca-…`
+// reads "Woman in racing outfit posing" while its record stores "So I would like to create an
+// image of an African female…"), so the title comes first; the prompt is the fallback (an upload
+// lands under its file name, which is also its prompt). Several media can share one title, so the
+// driver must still refuse an ambiguous tile, and the pre-spend check re-reads the real id after
+// the attach: this list never decides which media was attached. Ids with no known label are
 // omitted, so the driver fails closed rather than attach the wrong media.
 export function referenceNames(media, ids) {
-  const byId = new Map(media.map((m) => [m.mediaId, m.prompt]));
+  const byId = new Map(media.map((m) => [m.mediaId, m]));
   const names = {};
   for (const id of ids) {
-    const n = byId.get(id);
-    if (n != null && n !== '') names[id] = n;
+    const m = byId.get(id);
+    const candidates = [...new Set([m?.title, m?.prompt].filter((n) => typeof n === 'string' && n !== ''))];
+    if (candidates.length) names[id] = candidates;
   }
   return names;
 }
