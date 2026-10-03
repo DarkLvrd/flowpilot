@@ -439,7 +439,7 @@ when Claude exits.
    exactly what it added, and never touches your other MCP servers. If you keep Flow Pilot's files
    in a custom place, the installer copies `FLOWPILOT_HOME`/`FLOWPILOT_PORT` into the entry for you.
 
-2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's sixteen tools then appear in
+2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's tools then appear in
    Claude's tools list.
 
 3. **Pair this machine once.** Open the Flow Pilot dashboard, click **Pair an agent**, copy the
@@ -453,7 +453,7 @@ when Claude exits.
    never your cookies or tokens.
 
 4. **Check it.** Run `node helper/bin/flowpilot.js doctor`. The helper, pairing, MCP server, its
-   sixteen tools and the Claude config should each show ✅.
+   tools and the Claude config should each show ✅.
 
 Then, in Claude Desktop, type something like:
 
