@@ -11,6 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseSettingsSummary } from '../extension/lib/preflight.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -68,13 +69,27 @@ try {
   if (checks.some((c) => !c.ok)) {
     console.log('Self-check failed: not touching the composer.');
   } else {
-    const summary = await run('__flowPilotDriver.readPage().summaryText');
-    const kind = /^Image/.test(summary) ? 'image' : 'video';
-    const m = summary.match(/(\d{3,4}p).*?(\d+)s.*?crop_(\d+)_(\d+).*?x(\d)/);
+    // The summary alone cannot state the mode: in Image mode Flow writes the image model's name
+    // where a video chip writes `Video`. So read it the way the engine does — the panel's own mode
+    // radio, with the panel opened and closed again here (no fixed sleep: wait on the radios).
+    const raw = await run(`(async () => {
+      const trig = [...document.querySelectorAll('button, [role=button]')].find((b) => b.getAttribute('aria-label') === 'Settings trigger');
+      if (!trig) return null;
+      if (!document.querySelector('[role=radio]')) {
+        trig.click();
+        await new Promise((resolve) => { const obs = new MutationObserver(() => { if (document.querySelector('[role=radio]')) { obs.disconnect(); resolve(); } }); obs.observe(document.body, { subtree: true, childList: true, attributes: true }); });
+      }
+      const page = __flowPilotDriver.readPage();
+      trig.click();
+      return page;
+    })()`);
+    const summary = parseSettingsSummary(raw.summaryText, { mode: raw.modeKind });
+    const kind = summary.kind;
+    console.log('settings:', JSON.stringify({ summaryText: raw.summaryText, modeKind: raw.modeKind, parsed: summary }));
     // Ask for exactly what is already selected, so no setting changes.
-    const job = { prompt: PROMPT, settings: kind === 'video' && m
-      ? { kind, input: 'ingredients', resolution: m[1], durationS: Number(m[2]), aspect: `${m[3]}:${m[4]}`, count: Number(m[5]) }
-      : { kind: 'image', aspect: '16:9', count: 1 } };
+    const job = { prompt: PROMPT, settings: kind === 'video'
+      ? { kind, input: 'ingredients', resolution: summary.resolution, durationS: summary.durationS, aspect: summary.aspect, count: summary.count }
+      : { kind: 'image', aspect: summary.aspect, count: summary.count } };
     // Twice: the second prompt must replace the first, not append to it.
     for (const prompt of ['flowpilot dry run, stale text that must be replaced', PROMPT]) {
       try {

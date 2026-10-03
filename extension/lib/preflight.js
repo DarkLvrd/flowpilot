@@ -2,16 +2,30 @@
 // correct tab, correct project, correct mode, verbatim prompt, cost known, cap not exceeded.
 // Pure: the driver gathers what the page shows, this decides.
 
-// "Video · 360p · 4s crop_16_9 x1" → { kind, resolution, durationS, aspect, count }
-export function parseSettingsSummary(text = '') {
-  const kind = text.match(/^\s*(Video|Image)\b/i)?.[1].toLowerCase() ?? null;
+// The Settings trigger's summary, read off the trigger's own text. Two shapes are real on the live
+// page (captured 2026-10-03, recon/FINDINGS.md "Settings chip shapes"):
+//   video  " Video · 360p · 4s crop_16_9 x1 "   — the word `Video` first
+//   image  " 🍌 Nano Banana 2 crop_16_9 x1 "    — the image model's name where a video chip writes
+//                                                 its kind word, and no resolution and no duration
+// `mode` is the settings panel's own checked mode radio, which the driver reads while the panel is
+// open: Flow's own statement of the mode, and the only kind word an image chip has. The chip's own
+// word wins when Flow writes one, then the radio, then the chip's shape — an image chip is the only
+// chip with a crop and a count and neither a resolution nor a duration. A chip that reads as none
+// of them keeps `kind` null, and `checkBeforeSpend` refuses it before any credit moves.
+// "Video · 360p · 4s crop_16_9 x1" → { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 }
+export function parseSettingsSummary(text = '', { mode = null } = {}) {
+  const word = text.match(/^\s*(Video|Image)\b/i)?.[1].toLowerCase() ?? null;
   const aspect = text.match(/crop_(\d+)_(\d+)/);
+  const resolution = text.match(/\b(\d{3,4}p)\b/)?.[1] ?? null;
+  const durationS = numberOr(text.match(/\b(\d+)s\b/)?.[1]);
+  const count = numberOr(text.match(/\bx(\d)\b/)?.[1]);
+  const shape = resolution == null && durationS == null && (aspect || count != null) ? 'image' : null;
   return {
-    kind,
-    resolution: text.match(/\b(\d{3,4}p)\b/)?.[1] ?? null,
-    durationS: numberOr(text.match(/\b(\d+)s\b/)?.[1]),
+    kind: word ?? mode ?? shape,
+    resolution,
+    durationS,
     aspect: aspect ? `${aspect[1]}:${aspect[2]}` : null,
-    count: numberOr(text.match(/\bx(\d)\b/)?.[1]),
+    count,
   };
 }
 
@@ -23,7 +37,7 @@ export function parseCostLine(text = '') {
 // job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null),
 //           references? { input, ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null,
 //                         characters: [{ entityId, name }] } }
-// page:   { tabId, url, prompt, summary, input, model, cost, generateEnabled, overlayOpen,
+// page:   { tabId, url, prompt, summary, modeKind, input, model, cost, generateEnabled, overlayOpen,
 //           attached? { ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null,
 //                       characters: [/asb/ thumbnail token] },
 //           characterTokens? { [name]: token }, mentions? [{ entityId, referenceType, valid }] }

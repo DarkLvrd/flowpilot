@@ -2,13 +2,50 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettingsSummary, parseCostLine, checkBeforeSpend } from '../lib/preflight.js';
 
-test('reads the Settings trigger summary (recon text)', () => {
-  assert.deepEqual(parseSettingsSummary('Video · 360p · 4s crop_16_9 x1'),
+// The chip text is captured from the live page (recon/FINDINGS.md "Settings chip shapes",
+// 2026-10-03; `recon/raw/live-chips.mjs` is the probe that read it). The Settings trigger's own
+// textContent, exactly as the driver reads it — leading spaces and all.
+test('reads the Settings trigger summary', () => {
+  assert.deepEqual(parseSettingsSummary(' Video · 360p · 4s crop_16_9 x1 '),
     { kind: 'video', resolution: '360p', durationS: 4, aspect: '16:9', count: 1 });
-  assert.deepEqual(parseSettingsSummary('Video · 720p · 10s crop_9_16 x2'),
+  assert.deepEqual(parseSettingsSummary(' Video · 720p · 10s crop_9_16 x2 '),
     { kind: 'video', resolution: '720p', durationS: 10, aspect: '9:16', count: 2 });
-  assert.equal(parseSettingsSummary('Image · crop_16_9 x1').kind, 'image');
+  // Image mode: Flow writes the image model's name where a video chip writes the word `Video`, so
+  // there is no kind word to read. Its own shape (no resolution, no duration) says image.
+  assert.deepEqual(parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 '),
+    { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 });
+  assert.deepEqual(parseSettingsSummary(' 🍌 Nano Banana 2 crop_9_16 x2 '),
+    { kind: 'image', resolution: null, durationS: null, aspect: '9:16', count: 2 });
+  // The other image aspects Flow offers are real chips too, unpriced kinds Flow Pilot does not
+  // build (`buildJob` allows 16:9 and 9:16 only): the kind is still image and the aspect stays
+  // null, so a job can never be submitted against an aspect the parser only guessed at.
+  for (const [chip, aspect] of [['crop_landscape', null], ['crop_square', null], ['crop_portrait', null]]) {
+    assert.deepEqual(parseSettingsSummary(` 🍌 Nano Banana 2 ${chip} x1 `),
+      { kind: 'image', resolution: null, durationS: null, aspect, count: 1 });
+  }
+});
+
+test('the settings panel\'s own checked mode radio settles the kind when the chip has no word', () => {
+  // The driver reads the mode radio while the panel is open; it is Flow's own statement of the mode
+  // and it travels with the chip text into this parser.
+  assert.equal(parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 ', { mode: 'image' }).kind, 'image');
+  assert.equal(parseSettingsSummary(' Video · 360p · 4s crop_16_9 x1 ', { mode: 'video' }).kind, 'video');
+  // The chip's own word wins, so a mode radio that drifted from the panel is caught as a kind
+  // mismatch by the pre-spend check rather than smuggled through by the hint.
+  assert.equal(parseSettingsSummary(' Video · 360p · 4s crop_16_9 x1 ', { mode: 'image' }).kind, 'video');
+  assert.equal(parseSettingsSummary(' Video · 360p · 4s crop_16_9 x1 ', { mode: 'image' }).resolution, '360p');
+});
+
+test('a chip that reads as neither kind keeps kind null, so nothing is submitted blind', () => {
   assert.equal(parseSettingsSummary('something new').kind, null);
+  assert.equal(parseSettingsSummary('').kind, null);
+  assert.equal(parseSettingsSummary(undefined).kind, null);
+  assert.equal(parseSettingsSummary('Image · crop_16_9 x1').kind, 'image'); // a kind word, if Flow ever writes one
+  assert.equal(parseSettingsSummary('Image · crop_16_9 x1').aspect, '16:9');
+  // A chip with a resolution but no mode word: not an image chip (an image chip has neither a
+  // resolution nor a duration), so without the panel's radio reading the kind stays null.
+  assert.equal(parseSettingsSummary('Omni 1.1 Flash 360p 4s crop_16_9 x1').kind, null);
+  assert.equal(parseSettingsSummary('Omni 1.1 Flash 360p 4s crop_16_9 x1', { mode: 'video' }).kind, 'video');
 });
 
 test('reads the cost line', () => {
@@ -31,6 +68,30 @@ const page = {
 };
 const budget = { cap: 20, spent: 12, halted: false };
 const problems = (p = {}, j = {}, b = {}) => checkBeforeSpend({ ...job, ...j }, { ...page, ...p }, { ...budget, ...b }).problems;
+
+// The still gate: the live Image chip (`🍌 Nano Banana 2 crop_16_9 x1`, captured 2026-10-03) parses
+// as an image job's page, so `checkBeforeSpend` lets the free still through — this is the bug that
+// stopped every still (BUG-1).
+const stillJob = {
+  tabId: 7, projectId: PID, prompt: 'a rooftop at dusk',
+  settings: { kind: 'image', input: 'text', aspect: '16:9', count: 1 },
+  expectedCost: 0, modelFamily: '🍌 Nano Banana 2',
+};
+const stillPage = {
+  ...page, prompt: 'a rooftop at dusk',
+  summary: parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 ', { mode: 'image' }),
+  summaryText: ' 🍌 Nano Banana 2 crop_16_9 x1 ', modeKind: 'image', input: 'ingredients',
+  model: '🍌 Nano Banana 2', cost: 0,
+};
+
+test('an image job against the live Image chip passes the pre-spend check', () => {
+  assert.deepEqual(checkBeforeSpend(stillJob, stillPage, budget), { ok: true, problems: [] });
+  // The panel's radio reading is what makes the chip legible; without any reading the chip's own
+  // shape still settles it, but a shape that says image while the panel says video is caught.
+  assert.deepEqual(checkBeforeSpend(stillJob, { ...stillPage, summary: parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 ') }, budget), { ok: true, problems: [] });
+  assert.match(problems({ summary: parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 ', { mode: 'video' }), modeKind: 'video' }, stillJob).join(), /kind is video, job wants image/);
+  assert.match(problems({ summaryText: 'something new', summary: parseSettingsSummary('something new'), cost: 0 }, stillJob).join(), /kind is null, job wants image/);
+});
 
 test('all checks pass on a matching page', () => {
   assert.deepEqual(checkBeforeSpend(job, page, budget), { ok: true, problems: [] });
@@ -168,7 +229,7 @@ test('a job with no character is unaffected by the character check', () => {
 
 test('a free image may have no cost line, but a shown cost must still be 0', () => {
   const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0, modelFamily: '🍌 Nano Banana 2' };
-  const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null, model: '🍌 Nano Banana 2' };
+  const imagePage = { summary: parseSettingsSummary(' 🍌 Nano Banana 2 crop_16_9 x1 ', { mode: 'image' }), input: null, model: '🍌 Nano Banana 2' };
   assert.deepEqual(problems({ ...imagePage, cost: null }, image), []);
   assert.match(problems({ ...imagePage, cost: 2 }, image).join(), /cost/);
 });

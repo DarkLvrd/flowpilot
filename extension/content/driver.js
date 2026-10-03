@@ -42,6 +42,10 @@
     copy.querySelectorAll('mat-icon').forEach((icon) => icon.remove());
     return text(copy);
   };
+  // A readable Settings summary: the video chip's own kind word, or the image chip's model name plus
+  // the crop/count it carries (lib/preflight.js parseSettingsSummary is the authority on what the
+  // summary means and refuses anything it cannot read).
+  const SUMMARY_READABLE = /^\s*(Video|Image)\b|crop_|\bx\d/;
 
   function labelOf(el) {
     if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
@@ -134,7 +138,7 @@
       ['Prompt box', !!editor()],
       ['Start generation button', !!composerButton(NAMES.generate)],
       ['Settings trigger', !!summary],
-      ['Settings summary readable', !!summary && /^(Video|Image)\b/.test(text(summary))],
+      ['Settings summary readable', !!summary && SUMMARY_READABLE.test(text(summary))],
       ['Add ingredients button', !!composerButton(NAMES.ingredients)],
       ['Agent toggle', !!agentButton()],
       ['Account details', !!button(NAMES.account)],
@@ -341,6 +345,10 @@
       url: location.origin + location.pathname,
       prompt: promptText(),
       summaryText: text(composerButton(NAMES.settings)),
+      // The settings panel's own checked mode radio, when the panel is open. In Image mode the
+      // chip carries the image model's name instead of a kind word, so this is the one place the
+      // mode itself can be read; lib/preflight.js uses it as the fallback kind.
+      modeKind: radio('Video')?.checked ? 'video' : radio('Image')?.checked ? 'image' : null,
       costText: costText(),
       input,
       agentPanelOpen: agentPanelOpen(),
@@ -463,7 +471,7 @@
     after.characterTokens = characterTokens;
     after.mentions = readMentions();
     // Mode radios, model and cost are only visible with the panel open; the rest is read after closing.
-    return { ...after, input: withPanel.input, costText: withPanel.costText, model };
+    return { ...after, input: withPanel.input, modeKind: withPanel.modeKind, costText: withPanel.costText, model };
   }
 
   // `expect` is what the pre-spend check approved ({ url, prompt, summaryText }). Everything is

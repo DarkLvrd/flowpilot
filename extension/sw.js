@@ -116,8 +116,11 @@ const driver = {
       tabId: job.tabId,
       url: p.url,
       prompt: p.prompt,
-      summary: parseSettingsSummary(p.summaryText),
+      summary: parseSettingsSummary(p.summaryText, { mode: p.modeKind }),
       summaryText: p.summaryText,
+      // The settings panel's own mode radio reading, for diagnostics: the chip text alone cannot
+      // state the mode in Image mode (the chip carries the image model's name instead).
+      modeKind: p.modeKind ?? null,
       input: p.input,
       model: p.model,
       cost: parseCostLine(p.costText ?? ''),
@@ -350,6 +353,12 @@ async function withComposedEntities(spec, projectId) {
   };
 }
 
+const dedupeCharacters = (list) => {
+  const out = [];
+  for (const c of list) if (c?.entityId && !out.some((x) => x.entityId === c.entityId)) out.push({ entityId: c.entityId, name: c.name });
+  return out;
+};
+
 // Reads the model catalog for pricing. A blocked RPC halts everything and refuses the job rather
 // than queueing blind (docs/SPEC.md hard rules; docs/LESSONS.md #19).
 async function catalogRecipes() {
@@ -402,7 +411,7 @@ async function addPreviewJob(spec) {
     { projectId, recipes },
   );
   // A preview must be free: refuse to create one whose still would cost credits (an unknown cost
-  // fails closed here too), so the "free preview" step can never spend.
+  // fails close here too), so the "free preview" step can never spend.
   assertFreePreview(stillJob.expectedCost, stillJob.recipe);
 
   // The held video: Frames, with the still as its first frame once the person approves it.
