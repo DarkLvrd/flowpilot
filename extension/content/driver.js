@@ -21,6 +21,9 @@
   const UPLOAD_TOOLTIP = 'Upload media';
   const ADD_TO_PROMPT = /^add to prompt$/i;
   const FRAME_SLOT = { firstFrame: 'Start', lastFrame: 'End' };
+  // Reference tiles and attached thumbnails can take a few seconds to render (a fresh upload, or a
+  // virtual-scroller picker); one budget for finding a tile and for reading the attach back.
+  const ATTACH_WAIT_MS = 15_000;
 
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -187,7 +190,7 @@
   // guesses which media to attach when names collide.
   async function selectInPicker(name) {
     const tiles = await waitFor(() => { const m = pickerTiles(name); return m.length ? m : null; },
-      { what: `the picker tile named "${name}"` });
+      { what: `the picker tile named "${name}"`, timeoutMs: ATTACH_WAIT_MS });
     if (tiles.length > 1) throw new Error(`Several media are named "${name}" in the picker; cannot tell which to attach`);
     if (!clickable(tiles[0])) throw new Error(`The picker tile named "${name}" is not clickable`);
     tiles[0].click();
@@ -244,7 +247,7 @@
           await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
           // The thumbnail renders just after the picker closes; wait for it so the pre-spend check
           // (which reads attached ids) does not run before the reference is on the page.
-          await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: 15_000 });
+          await waitFor(() => attachedIdsNow().includes(id), { what: `the ${FRAME_SLOT[which]} frame to appear attached`, timeoutMs: ATTACH_WAIT_MS });
         }
         return;
       }
@@ -253,7 +256,7 @@
         await selectInPicker(nameFor(id));
         confirmIfPresent();
         await waitFor(() => !picker(), { what: 'the picker to close after attaching' }).catch(() => {});
-        await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: 15_000 });
+        await waitFor(() => attachedIdsNow().includes(id), { what: `reference ${id} to appear attached`, timeoutMs: ATTACH_WAIT_MS });
       }
     } finally {
       await closePicker().catch(() => {});
