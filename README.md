@@ -88,6 +88,13 @@ is overlaid on Flow's own page.
   frame through the ordinary **Frames** path and lets it run. A held video can never be approved or
   submitted before that, and only the dashboard can promote one, so the look is approved before any
   credits are spent.
+- **A still may need your own click on today's Flow build.** Flow only runs an Image-mode
+  generation when the click is a real user gesture — its own submit path checks `event.isTrusted`
+  (live 2026-10-03, `boq_labs-ai-sandbox-frontend_20261002.00_p0`). Flow Pilot prepares the composer
+  fully (prompt verbatim, Image mode, 0-credit cost line read first), but a click it makes itself is
+  ignored there, so a still has to be started with Flow's own **Start generation** button by hand
+  until this is decided. Video jobs are unaffected: Flow accepts Flow Pilot's click in those modes.
+  The dashboard's **Flow compatibility** note and `recon/FINDINGS.md` say exactly what was proven.
 - **Describe it once** — the **Describe it once → scene prompts** button (popup or dashboard) opens a
   page that turns one plain sentence into a set of scene prompts (wide establishing shot → medium →
   close-up → over-the-shoulder → low-angle → tracking) from a documented template, entirely
@@ -210,6 +217,12 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
 - **The library is mirrored** to `~/.flowpilot/projects/<projectId>/entities.json` through the helper
   whenever it changes, so a browser reinstall does not lose it, and `flowpilot entity export|import|
   restore` moves it in and out of a file.
+- **Naming an entity in a job carries it, not just its text.** A job that names a library entity
+  composes its block and records the entity; when that entity is a **linked Flow Character** the job
+  also carries **Flow's own entity id**, so Flow's picker attaches it and the pre-spend check
+  verifies it (`flowpilot add --entity`, the MCP `entities` list, and a shot row all take the same
+  path). A job whose mode cannot carry a chip (Frames, and the Frames still preview) is **refused
+  with the reason** instead of sending a prompt that names a subject the composer never attached.
 - **Where the canonical text comes from.** `extension/assets/prompts/` holds byte-verbatim copies of
   `/Users/mac/pixar-studio/prompts/{style_lock,scene_template,camera_moves,animation_principles}.md`.
   They are user-editable data: the style lock becomes the project's style entity, the scene template
@@ -294,7 +307,7 @@ flowpilot job <id>                     One job
 flowpilot add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|720p]
              [--duration 4|6|8|10] [--aspect 16:9|9:16] [--count 1-4]
              [--project ID] [--out /abs/path.mp4]
-             [--ref REF ...] [--first-frame REF] [--last-frame REF]
+             [--ref REF ...] [--first-frame REF] [--last-frame REF] [--entity NAME ...]
 flowpilot approve|cancel|requeue|retry-download <id>
 flowpilot entity add --project P --kind character --name Rudy --desc-file block.txt
              [--negative-file neg.txt] [--alias A ...]
@@ -338,7 +351,11 @@ uploads it through Flow's own **Upload media** control, never sending cookies or
 reference-to-*video* generation for a video job and a reference-to-*image* one for a still
 (`--kind image`), so an approved still can carry a character's identity forward. **Frames**
 generate a video between a start and end photo — `--first-frame` (and an optional `--last-frame`).
-Before it spends, Flow Pilot checks the right references are attached, verified by media id. Example:
+Before it spends, Flow Pilot checks the right references are attached, verified by media id; the
+picker finds each reference by the label Flow itself shows it under — the workflow title Flow gave a
+generated media, or an upload's file name — and refuses a label that matches several tiles rather
+than attach one of them. A failed attach closes the picker it opened, so it cannot wedge the next
+job. Example:
 
 ```
 flowpilot add --prompt "she turns to face the camera" --ref /Users/me/face.png --resolution 360p --duration 4

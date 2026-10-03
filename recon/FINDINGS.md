@@ -318,3 +318,117 @@ The job took the **`MZZa6b`** route (`/VideoFxService.BatchAsyncGenerateVideoRef
 - Balance before/after read with the read-only `nzlxg`: **50 → 46**.
 - No helper was started or stopped; `recon/capture.mjs --generate` recorded the job and is not
   running. `/tmp` probe scripts are deleted after this entry.
+
+## 2026-10-03 — the still gate: the settings chip, the picker's labels, and Flow's own click gate
+
+Fixing the three blockers the end-to-end test found (`data/flowpilot-e2e-test/report.md` §4, §5, §10).
+Flow build seen: `boq_labs-ai-sandbox-frontend_20261002.00_p0` (`window.WIZ_global_data.cfb2h`, and the
+same `bl=` in the page's own batchexecute URLs), account `darkboyy320@gmail.com`, practice Chrome on
+CDP port **9333**, project `de7baa89-…`. **One still was generated, at 0 credits** (the cost line was
+read first); nothing else was submitted, no video was approved or clicked, and every other experiment
+below ran behind a request firewall that failed every non-read-only request inside the browser, so no
+generate reached Google (probes: `recon/raw/live-*.mjs`, gitignored).
+
+### The settings chip, read off the trigger itself (read-only, 0 credits)
+
+The driver reads the Settings trigger's own `textContent`; the live chips are:
+
+| mode | chip text (raw `textContent`) | cost line |
+|---|---|---|
+| Video | ` Video · 360p · 4s crop_16_9 x1 ` | `Generating will use 4 credits` |
+| Image | ` 🍌 Nano Banana 2 crop_16_9 x1 ` | `Generating will use 0 credits` |
+| Image, other aspects | ` 🍌 Nano Banana 2 crop_landscape x1 ` (4:3), `… crop_square x1 ` (1:1), `… crop_portrait x1 ` (3:4), `… crop_9_16 x1 ` | `0 credits` |
+| Image, count | ` 🍌 Nano Banana 2 crop_16_9 x2 ` | `0 credits` |
+
+So **Image mode writes the image model's name where a video chip writes the word `Video`**: there is no
+kind word to read at all, and the old fixture `Image · crop_16_9 x1` was a string this page never
+produces. With the panel open the mode radios are the authority (`Image`/`Video` checked state), and an
+image chip is also the only chip with a crop and a count and **neither** a resolution nor a duration —
+which is what `extension/lib/preflight.js` now uses, in that order, still failing closed on a chip that
+reads as none of them. Only `crop_16_9`/`crop_9_16` become an aspect (Flow Pilot builds 16:9 and 9:16
+only); `crop_landscape`/`crop_square`/`crop_portrait` stay null, so a job can never be submitted
+against an aspect the parser guessed at.
+
+### The picker's tile labels are the workflow titles (read-only + one attach, 0 credits)
+
+Read-only `Zzl0ze` for the project, and the picker's own labels with the picker open (`live-picker.mjs`,
+`live-media.mjs`). The project holds 12 media; the picker's `All` list read:
+
+`Person standing on rooftop balcony` (video) · `Person in Formula One car` (video) ·
+`Driver navigating Formula One race` (video) · `Woman driving Formula One car` (video **and** two
+images) · `Woman in racing outfit posing` (image) · `Woman holding Formula One helmet` (image ×3) ·
+`nancy` (Character) · `Upload media` · `Add to prompt`
+
+Every one of those is the **workflow title**, never the prompt the record keeps: media
+`b7df06ca-…` stores the prompt `So I would like to create an image of an African female …` and its tile
+reads `Woman in racing outfit posing`. Three media share one title, and two of them share a title *and*
+a prompt (the same still generated twice, 65 s apart) — so a label alone can never identify a media,
+which is why the driver refuses an ambiguous label and the id read back off the composer stays the last
+word before a click. `referenceNames` therefore returns the labels to try in order: the workflow title
+first, the prompt as the fallback (an upload lands under its file name, which is also its prompt).
+
+Proof the route works end to end (0 credits, one attach, no Generate):
+
+- one still generated from `a brass compass on a weathered wooden table, soft window light` after the
+  cost line read `Generating will use 0 credits`; Flow titled it `Brass compass on wooden table`
+- a Frames video job was prepared with that still as its first frame; the driver attached it by the
+  title and the composer **read back the still's own media id** (`b1241524-…`) as the first frame
+- the old prompt-based matcher would have looked for `a brass compass on a weathered wooden table, soft
+  window light`, a label no tile in that project shows — which is exactly the timeout the e2e test hit
+
+### Closing the picker (0 credits)
+
+The Frames picker is `flow-add-menu-popover-content` and carries its **own `Close` control**
+(`mat-icon-button`, `aria-label="Close"`); clicking it closed the picker where a backdrop click did
+nothing. The Ingredients picker has no close control at all and is dismissed by the composer's own
+`Add ingredients` button. Reproduced twice: a failed attach with the picker left open made the *next*
+`prepare` fail with `Settings trigger is not clickable` (a backdrop covered it); with the fix, the
+failed attach closed the picker, the trigger stayed clickable, and the next `prepare` ran.
+
+### NEW: Flow's Image-mode Generate ignores synthetic clicks (read-only + firewalled clicks)
+
+Not a Flow Pilot bug, and the reason a still cannot be finished by the extension today. Firewalled
+experiments (`live-click-firewall.mjs`, `live-click-video.mjs`, `live-click-why.mjs`,
+`live-click-commit.mjs`) prepared a real job in each mode with the worktree driver and watched whether
+Flow's own handler ran (its first act is to have Flow mint its own reCAPTCHA token):
+
+| mode | `button.click()` | pointer/mouse sequence | focus/blur then click | real (CDP) pointer click |
+|---|---|---|---|---|
+| Video | **handler runs** (`YhhmEf` attempted) | — | — | handler runs |
+| Image | nothing | nothing | nothing | **handler runs** (`ogiZ0b` attempted) |
+
+The button's markup is identical in both modes (`<button type="submit" aria-label="Start generation">`
+inside `flow-generate-icon-button`), and the guard is in Flow's own bundle:
+
+```
+submit(a){this.Te()||this.ma.oa&&this.Ua.we.Xfa()&&(a==null||!a.isTrusted)||(Alb(...),this.eh.emit(a),...)}
+```
+
+`(a == null || !a.isTrusted)` — Flow runs the generate only for a trusted event in that mode. A content
+script cannot mint one. So a still has to be started by a person's click (or by a route the owner
+chooses; that is a product decision, not a patch here). `extension/lib/compat.js` and the README say so
+rather than pretending. What *is* proven: the composer is prepared and verified (prompt verbatim, Image
+mode, cost line 0, all pre-spend checks pass), and a real click at 0 credits generates the still.
+
+### NEW: a leftover attachment wedges the next Frames prepare
+
+A composer that still holds a frame does not offer the `Start` slot any more, so the next Frames
+`prepare` fails with `The Start frame slot is not clickable`. It happened here for real: after a
+prepare whose attach had succeeded, the following rehearsal prepare hit it. Same user-visible symptom
+as the picker wedge above, different cause (debris in the composer, not an overlay), and not fixed in
+this change — it needs its own decision (clear leftovers at prepare time, which the composer's chips
+do offer via their own `cancel` control). Worth an issue: after a job fails *after* attaching, the tab
+is left wedged for the next job.
+
+### Housekeeping
+
+- One work tab throughout; no tab opened, closed or reloaded; the composer was left with `Video ·
+  360p · 4s crop_16_9 x1`, no attachments and the picker closed. The e2e lane's own leftovers (a
+  character chip and its prompt) were detached with Flow's own chip controls.
+- Credits: the still's cost line read **0 credits** before the click and the account's own balance
+  (`nzlxg`) read **42** after the run; the only media created in this project during the session is
+  that one image (`b1241524-…`), and the extension's own session counter is unchanged at `24 / 24`
+  (the day's balance read 46 in the e2e report, so the other 4 credits were spent outside this
+  session and outside this project; nothing here approved or clicked a video).
+- Firewalls were disabled and every probe's injected world left behind; probe scripts live in
+  `recon/raw/` (gitignored) with their logs (`live-still-gate.log`, `live-attach.log`).
