@@ -76,9 +76,9 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
     refs: spec.refs ?? [],
     firstFrame: spec.firstFrame ?? null,
     lastFrame: spec.lastFrame ?? null,
-    // A Flow Character is a reference as far as the recipe is concerned (r2v, report §3c); it is
-    // carried on the settings so the cost preview and the later `technicalCheck` price the job the
-    // same way, from the stored record alone.
+    // A Flow Character is a reference as far as the recipe is concerned (r2v: the paid capture,
+    // recon/FINDINGS.md 2026-10-03); it is carried on the settings so the cost preview and the later
+    // `technicalCheck` price the job the same way, from the stored record alone.
     ...(referencePlan.characters?.length ? { characters: referencePlan.characters } : {}),
   };
 

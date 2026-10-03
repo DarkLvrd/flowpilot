@@ -51,8 +51,9 @@ export function recipeFor({ kind, model = 'nano-banana-2', input, durationS, res
       : `abra_i2v_${durationS}s${suffix}`;
   }
   // Ingredients with no references is plain text-to-video (inferred; same cost either way). A Flow
-  // Character is a reference too (it travels as a structured mention plus its chip, report §3c), so
-  // a character-only job is reference-to-video, not text-to-video.
+  // Character is a reference too — the paid capture took the reference route (`MZZa6b`) with a
+  // character chip and no photo at all (recon/FINDINGS.md, 2026-10-03) — so a character-only job is
+  // reference-to-video, not text-to-video.
   if (input === 'ingredients' && (refs.length > 0 || characters.length > 0)) return `abra_r2v_${durationS}s${suffix}`;
   if (input === 'text' || input === 'ingredients') return `abra_t2v_${durationS}s${suffix}`;
   throw new Error(`Unknown video input: ${input}`);
