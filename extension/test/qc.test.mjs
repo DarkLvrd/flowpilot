@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   QC_CHECKS, QC_VISIBLE, QC_RESULTS, QC_VERDICTS, QC_POLICY, qcVerdict, policyFor,
   technicalCheck, buildQcRecord, validateQcRecord, consistencyBlockFor, fixCostText, fixJobSpec,
-  jobPromptParts,
+  jobPromptParts, reviewView,
 } from '../lib/qc.js';
 import { appendConsistencyBlock } from '../lib/entities.js';
 import { sha256Hex } from '../lib/sha256.js';
@@ -242,4 +242,19 @@ test('a plain job with no composed parts starts from its own prompt, byte-verbat
   const composed = { prompt: 'x', promptParts: [{ kind: 'base', ref: 'prompt', sha256: 'b'.repeat(64), text: 'x' }] };
   assert.deepEqual(jobPromptParts(composed), composed.promptParts);
   assert.deepEqual(jobPromptParts({ prompt: '' }), []);
+});
+
+test('reviewView is the one view every surface shows', () => {
+  const unreviewed = reviewView({ id: 'j1', name: 'fox', state: 'done' });
+  assert.deepEqual(unreviewed, { id: 'j1', name: 'fox', state: 'done', reviewed: false, qc: null, verdict: null, failed: [], actions: [] });
+  const reviewed = reviewView({ id: 'j1', name: 'car', state: 'done', qc: buildQcRecord({ job: doneVideo(), checks: { ...Object.fromEntries(QC_VISIBLE.map((c) => [c, 'pass'])), wardrobe: 'fail' }, note: 'flat bronze', at: 1 }) });
+  assert.equal(reviewed.reviewed, true);
+  assert.equal(reviewed.verdict, 'regen');
+  assert.deepEqual(reviewed.failed, ['wardrobe']);
+  assert.equal(reviewed.actions.length, 1);
+  assert.equal(reviewed.actions[0].action, 'appendConsistencyBlock');
+  assert.equal(reviewed.actions[0].block, 'flat bronze');
+  assert.match(reviewed.actions[0].cost, /0 credits now/);
+  // The clip's state is the job's, so the panel can show a failed one only where it belongs.
+  assert.equal(reviewView({ id: 'j2', state: 'failed', qc: buildQcRecord({ job: { ...doneVideo(), state: 'failed' }, checks: Object.fromEntries(QC_VISIBLE.map((c) => [c, 'pass'])), at: 1 }) }).verdict, 'blocked');
 });

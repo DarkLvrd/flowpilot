@@ -79,8 +79,7 @@ test('an agent pairs with the dashboard code, then drives jobs through the exten
   ext.ws.close(); await t.helper.close();
 });
 
-test('no key, a wrong key, or a revoked key gets 401; health and pairing need none', async () => {
-  const t = await start();
+test('no key, a wrong key, or a revoked key gets 401; health and pairing need none', async () => {  const t = await start();
   assert.equal((await t.http('GET', '/status')).status, 401);
   assert.equal((await t.http('GET', '/status', { key: 'fp_nope' })).status, 401);
   assert.equal((await t.http('GET', '/health')).body.extension, false);
@@ -91,8 +90,7 @@ test('no key, a wrong key, or a revoked key gets 401; health and pairing need no
   await t.helper.close();
 });
 
-test('agents can never set the cap, clear a halt or pick the work tab (dashboard only)', async () => {
-  const t = await start();
+test('agents can never set the cap, clear a halt or pick the work tab (dashboard only)', async () => {  const t = await start();
   const calls = [];
   const ext = await fakeExtension(t.port, async (cmd) => { calls.push(cmd); return {}; });
   const key = await paired(t);
@@ -119,6 +117,31 @@ test('an extension error comes back to the agent as 400 with its message', async
   const r = await t.http('POST', '/jobs/j1/approve', { key });
   assert.equal(r.status, 400);
   assert.equal(r.body.error, 'Cannot approve a job that is done');
+  ext.ws.close(); await t.helper.close();
+});
+
+test('a QC verdict is recorded and a fix taken through the same HTTP surface (report §2.6)', async () => {
+  const t = await start();
+  const calls = [];
+  const ext = await fakeExtension(t.port, async (cmd, args) => {
+    calls.push([cmd, args]);
+    if (cmd === 'status') return { session: { cap: 10, spent: 0, halted: false }, jobs: [{ id: 'j1', state: 'done' }] };
+    if (cmd === 'qcSet') return { id: args.id, state: 'done', qc: { checkedAt: 1, by: 'agent', checks: { technical: 'pass', ...args.checks }, verdict: 'regen', note: args.note ?? null } };
+    if (cmd === 'qcFix') return { check: args.check, action: 'appendNegatives', cost: '+1 video credit when approved', still: null, video: { id: 'v2', state: 'queued', expectedCost: 7 } };
+    return { id: args.id, state: 'done' };
+  });
+  const key = await paired(t);
+  const recorded = await t.http('POST', '/jobs/j1/qc', { key, body: { checks: { identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' }, note: 'flat bronze' } });
+  assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
+  assert.equal(recorded.body.qc.verdict, 'regen');
+  assert.equal(calls.at(-1)[0], 'qcSet');
+  assert.equal(calls.at(-1)[1].note, 'flat bronze');
+  const fixed = await t.http('POST', '/jobs/j1/qc-fix', { key, body: { check: 'artefacts' } });
+  assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
+  assert.equal(fixed.body.video.id, 'v2');
+  assert.deepEqual(calls.at(-1), ['qcFix', { id: 'j1', check: 'artefacts' }]);
+  // Reading a clip still goes through the ordinary job route; the record rides on the job.
+  assert.equal((await t.http('GET', '/jobs/j1', { key })).body.state, 'done');
   ext.ws.close(); await t.helper.close();
 });
 

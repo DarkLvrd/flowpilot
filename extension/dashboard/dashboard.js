@@ -6,6 +6,7 @@ import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.j
 import { applyNameTemplate } from '../lib/naming.js';
 import { createEntitiesPanel, entityNames } from './entities.js';
 import { createShotsPanel } from './shots.js';
+import { createReviewPanel } from './review.js';
 
 const $ = (id) => document.getElementById(id);
 const show = (id, e) => { const el = $(id); el.hidden = !e; el.textContent = e?.message ?? ''; };
@@ -14,6 +15,9 @@ const act = (fn, errId = 'error') => async (...a) => { try { show(errId, null); 
 const entitiesPanel = createEntitiesPanel($('entities'));
 // The Shots panel and the still→anchor gate (report §2.5, Phase 2).
 const shotsPanel = createShotsPanel($('shots'));
+// The Review panel (report §2.6, Phase 3): the QC loop on finished clips. Recording a verdict and
+// taking a fix are job-data writes, so the same render() refreshes the queue below.
+const reviewPanel = createReviewPanel($('review'), { onChange: () => render() });
 
 let shownCap; // the saved cap last written into the box; the box is only refreshed when it changes
 let importFilename = ''; // the chosen file's name, so format detection can use the extension
@@ -174,6 +178,7 @@ async function render() {
   $('jobs').replaceChildren(...rows.flat());
   entitiesPanel.render(s.workTab?.projectId ?? null);
   shotsPanel.render(s.workTab?.projectId ?? null);
+  reviewPanel.render(s.jobs);
 }
 
 // ---- Storyboard import ------------------------------------------------------------------------

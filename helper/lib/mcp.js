@@ -4,6 +4,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
+import { QC_VISIBLE, reviewView } from '../../extension/lib/qc.js';
 
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const id = { type: 'object', properties: { id: { type: 'string', description: 'Job id' } }, required: ['id'], additionalProperties: false };
@@ -157,6 +158,40 @@ const TOOLS = [
       additionalProperties: false,
     },
     run: (c, a) => c.anchor({ ...a, shotId: need(a, 'shotId') }),
+  },
+
+  // ---- The QC loop (report §2.6). A verdict is job data (the design's rule: the tool surfaces the
+  // checks, records the verdict and offers the fix, never auto-approving on a machine score), and a
+  // fix only queues a job through the ordinary paths — the cap and the video's own approval still
+  // gate any spend, and the failed take is never overwritten.
+  {
+    name: 'flowpilot_review',
+    description: 'Review a finished clip, or act on a recorded verdict. With no checks it reads the clip\'s QC record and lists the fixes it offers and what each costs. Give all five visible checks (identity, wardrobe, location, artefacts, style) as pass or fail at once to record a verdict: `technical` is checked automatically from the job (bytes, duration, resolution, aspect, non-empty) and is never asked for, and the verdict follows from the checks (a technical failure blocks it). `fix: "<check>"` takes one offered fix — a free still first (identity, wardrobe, location) or a new video from the still that is already approved (artefacts, style). A fix always creates a new job and never rewrites the base prompt, the approved still or the failed take: append a consistency block, keep the old hashes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The finished job id' },
+        identity: { type: 'string', enum: ['pass', 'fail'], description: 'Does the subject still look like the entity?' },
+        wardrobe: { type: 'string', enum: ['pass', 'fail'], description: 'Outfit, props, jewellery or paint continuous?' },
+        location: { type: 'string', enum: ['pass', 'fail'], description: 'The same place across the shots that share it?' },
+        artefacts: { type: 'string', enum: ['pass', 'fail'], description: 'No unwanted text/watermark/logo, extra characters or distorted hands?' },
+        style: { type: 'string', enum: ['pass', 'fail'], description: 'Still the project\'s 3D style, not realism? (Check at 25/50/75% of the clip.)' },
+        note: { type: 'string', description: 'What you saw. When you take a fix, this text becomes the appended consistency block.' },
+        fix: { type: 'string', enum: QC_VISIBLE, description: 'Take the offered fix for this failed check (queues a new job; never regenerates on its own)' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    run: (c, a) => {
+      const id = need(a, 'id');
+      if (typeof a.fix === 'string' && a.fix) return c.qcFix({ id, check: a.fix });
+      const checks = {};
+      for (const check of QC_VISIBLE) if (a[check] != null) checks[check] = a[check];
+      if (Object.keys(checks).length === 0) return c.job(id).then((job) => reviewView(job));
+      const missing = QC_VISIBLE.filter((check) => !(check in checks));
+      if (missing.length) throw new Error(`Every visible check needs a pass or fail result at once; missing: ${missing.join(', ')} (technical is automatic and never asked for)`);
+      return c.qcSet({ id, checks, note: a.note ?? null });
+    },
   },
 ];
 

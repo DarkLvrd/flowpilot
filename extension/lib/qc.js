@@ -243,6 +243,22 @@ function referenceIds(job = {}) {
   return { ingredients: [...new Set(ingredients)], firstFrame, lastFrame };
 }
 
+// One clip's review, ready to show on any surface: whether it has been reviewed, the record, the
+// verdict and the fixes offered with their cost in words. Pure — the CLI, the MCP server and the
+// dashboard all render this same view, so the three cannot drift.
+export function reviewView(job = {}, { policy = QC_POLICY } = {}) {
+  const id = job.id ?? null;
+  if (!job.qc) {
+    return { id, name: job.name ?? null, state: job.state ?? null, reviewed: false, qc: null, verdict: null, failed: [], actions: [] };
+  }
+  const { verdict, failed, actions } = qcVerdict(job.qc.checks, policy, { note: job.qc.note });
+  return {
+    id, name: job.name ?? null, state: job.state ?? null,
+    reviewed: true, qc: job.qc, verdict, failed,
+    actions: actions.map((a) => ({ ...a, cost: fixCostText(a) })),
+  };
+}
+
 // The same validation the job store runs before writing a record, so a malformed verdict can never
 // land in storage (the store is the only writer).
 export function validateQcRecord(qc) {

@@ -176,6 +176,16 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
       return job;
     }
     j = /^\/jobs\/([\w-]+)\/([\w-]+)$/.exec(path);
+    // The QC loop (report §2.6): record a verdict on a finished clip, or take one fix. Both are job
+    // data — the extension computes `technical` itself and a fix only ever queues a job.
+    if (req.method === 'POST' && j && j[2] === 'qc') {
+      const body = await readJson(req);
+      return callExtension('qcSet', { ...body, id: j[1] });
+    }
+    if (req.method === 'POST' && j && j[2] === 'qc-fix') {
+      const body = await readJson(req);
+      return callExtension('qcFix', { ...body, id: j[1] });
+    }
     if (req.method === 'POST' && j && JOB_ACTIONS[j[2]]) return callExtension(JOB_ACTIONS[j[2]], { id: j[1] });
     throw new HttpError(404, `No such endpoint: ${req.method} ${path}`);
   }

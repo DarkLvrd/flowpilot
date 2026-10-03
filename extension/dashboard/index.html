@@ -89,6 +89,13 @@
   <h2>Shots <span class="hint" style="font-weight:400">— one still per shot, approved before any video exists</span></h2>
   <div id="shots"></div>
 
+  <h2>Review <span class="hint" style="font-weight:400">— the quality check on finished clips</span></h2>
+  <p class="hint">Six checks per clip: <code>technical</code> is automatic (bytes, duration bucket,
+  resolution, aspect, recipe), the other five need eyes. Nothing is approved or failed on a machine
+  score, and a <strong>Fix</strong> is a click that queues the next job — it never rewrites a base
+  prompt or an approved still, and the failed take stays on disk.</p>
+  <div id="review"></div>
+
   <h2>Queue</h2>
   <p><button id="approveAll" class="inline" type="button">Approve all queued</button>
      <button id="focusTab" class="inline" type="button" hidden>Show the Flow tab</button>

@@ -13,6 +13,13 @@ import { buildServerEntry } from '../lib/claude-desktop.js';
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
+// A finished clip's QC record, as the extension keeps one (report §2.6).
+const QC_RECORD = {
+  checkedAt: 1790000000000, by: 'human',
+  checks: { technical: 'pass', identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' },
+  verdict: 'regen', note: 'rear half of the car went flat bronze after 2s',
+};
+
 // Every world registers itself: a failing assertion must never leave this file's helper server or
 // bridge socket open, because one leaked handle keeps the whole `node --test` process alive (the
 // suite then looks hung even though every test printed a result).
@@ -35,7 +42,10 @@ async function world({ extension = true } = {}) {
       if (!m.cmd) return;
       calls.push([m.cmd, m.args]);
       const value = m.cmd === 'status'
-        ? { session: { cap: 10, spent: 4, halted: false }, workTab: { projectId: 'p1' }, jobs: [{ id: 'j1', name: 'fox', state: 'done', file: { path: '/x/fox.mp4' } }] }
+        ? { session: { cap: 10, spent: 4, halted: false }, workTab: { projectId: 'p1' }, jobs: [
+          { id: 'j1', name: 'fox', state: 'done', file: { path: '/x/fox.mp4' } },
+          { id: 'j2', name: 'car', state: 'done', file: { path: '/x/car.mp4' }, qc: QC_RECORD },
+        ] }
         : m.cmd === 'shots'
           ? { projectId: 'p1', shots: [{ id: 'shot_4', scene: 4, mode: 'ingredients', gate: { ok: false, problems: ['not approved'] }, stillJob: { id: 's1', state: 'rendering' }, videoCost: 7 }] }
           : m.cmd === 'importShots'
@@ -44,7 +54,11 @@ async function world({ extension = true } = {}) {
               ? { shot: { id: m.args.shotId }, still: { id: 's2', expectedCost: 0 } }
               : m.cmd === 'approveAnchor'
                 ? { shot: { id: m.args.shotId }, approval: { mediaId: 'ffffffff-0000-4000-8000-000000000006', frame: 'start' }, video: { id: 'v1', expectedCost: 4 } }
-                : { id: m.args.id ?? 'j2', state: m.cmd === 'addJob' ? 'queued' : 'approved', expectedCost: 4 };
+                : m.cmd === 'qcSet'
+                  ? { id: m.args.id, state: 'done', qc: { checkedAt: 1790000000000, by: 'agent', checks: { technical: 'pass', ...m.args.checks }, verdict: Object.values(m.args.checks).includes('fail') ? 'regen' : 'approved', note: m.args.note ?? null } }
+                  : m.cmd === 'qcFix'
+                    ? { check: m.args.check, action: 'appendConsistencyBlock', reason: `QC fix (${m.args.check})`, cost: '0 credits now: a still is free, then +1 video once it is approved', still: { id: 's9', expectedCost: 0, settings: { kind: 'image' } }, video: null }
+                    : { id: m.args.id ?? 'j2', state: m.cmd === 'addJob' ? 'queued' : 'approved', expectedCost: 4 };
       ws.send(JSON.stringify({ id: m.id, ok: true, value }));
     });
     await new Promise((r) => ws.once('open', r));
@@ -151,6 +165,47 @@ test('shots list/import, still and anchor forward to the extension (§2.3-§2.5)
   await w.close();
 });
 
+test('qc reads a clip\'s record, records a verdict and offers the fix (§2.6)', async () => {
+  const w = await world();
+  await w.run('pair', w.keyring.newCode().code);
+
+  // Read: the record the extension kept, with the fix it implies and what that costs.
+  const read = await w.run('qc', 'j2');
+  assert.equal(read.code, 0, read.text);
+  assert.match(read.text, /by human/);
+  assert.match(read.text, /verdict: regen/);
+  assert.match(read.text, /❌ wardrobe/);
+  assert.match(read.text, /flat bronze/);
+  assert.match(read.text, /appendConsistencyBlock/);
+  assert.match(read.text, /0 credits now/);
+
+  const unreviewed = await w.run('qc', 'j1');
+  assert.equal(unreviewed.code, 0, unreviewed.text);
+  assert.match(unreviewed.text, /No QC verdict yet/i);
+  assert.match(unreviewed.text, /--identity pass/);
+
+  // Record: the five visible checks go to the extension; technical is never asked for.
+  const recorded = await w.run('qc', 'j1', '--identity', 'pass', '--wardrobe', 'pass', '--location', 'pass', '--artefacts', 'fail', '--style', 'pass', '--note', 'a watermark appeared', '--json');
+  assert.equal(recorded.code, 0, recorded.text);
+  assert.deepEqual(w.calls.at(-1), ['qcSet', { id: 'j1', checks: { identity: 'pass', wardrobe: 'pass', location: 'pass', artefacts: 'fail', style: 'pass' }, note: 'a watermark appeared' }]);
+  assert.equal(JSON.parse(recorded.text).qc.verdict, 'regen');
+
+  // A fix is a click: it queues the next job and says what that costs.
+  const fixed = await w.run('qc', 'j2', '--fix', 'wardrobe');
+  assert.equal(fixed.code, 0, fixed.text);
+  assert.deepEqual(w.calls.at(-1), ['qcFix', { id: 'j2', check: 'wardrobe' }]);
+  assert.match(fixed.text, /s9/);
+  assert.match(fixed.text, /0 credits now/);
+  assert.match(fixed.text, /failed take stays on disk/);
+
+  // Usage errors, not silent half-verdicts.
+  assert.equal((await w.run('qc')).code, 2);
+  assert.equal((await w.run('qc', 'j1', '--fix')).code, 2);
+  assert.equal((await w.run('qc', 'j1', '--identity', 'maybe')).code, 2);
+  assert.equal((await w.run('qc', 'j1', '--identity', 'pass')).code, 2); // the other four are missing
+  await w.close();
+});
+
 test('doctor reports each part of the setup', async () => {
   const w = await world();
   // The published MCP surface, stated explicitly so a rename or a removal fails here: the seven job
@@ -161,7 +216,7 @@ test('doctor reports each part of the setup', async () => {
   const expected = [
     'flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download',
     'flowpilot_entity_list', 'flowpilot_entity_upsert', 'flowpilot_entity_approve', 'flowpilot_entity_supersede', 'flowpilot_compose_prompt',
-    'flowpilot_shots', 'flowpilot_import_shots', 'flowpilot_anchor_still',
+    'flowpilot_shots', 'flowpilot_import_shots', 'flowpilot_anchor_still', 'flowpilot_review',
   ];
   assert.deepEqual([...TOOL_NAMES].sort(), [...expected].sort());
   const tools = [...TOOL_NAMES];

@@ -34,7 +34,9 @@ function fakeClient() {
   return {
     calls,
     status: async () => ({ session: { cap: 10, spent: 0 }, jobs: [] }),
-    job: async (id) => ({ id, state: 'rendering' }),
+    job: async (id) => (id === 'jqc'
+      ? { id, state: 'done', qc: { checkedAt: 1790000000000, by: 'human', checks: { technical: 'pass', identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' }, verdict: 'regen', note: 'flat bronze' } }
+      : { id, state: 'rendering' }),
     add: async (spec) => { calls.push(['add', spec]); return { id: 'j1', state: 'queued', expectedCost: 4 }; },
     act: async (id, action) => { calls.push([action, id]); if (id === 'bad') throw new Error('Cannot approve a job that is done'); return { id, state: 'approved' }; },
     entities: async (projectId) => { calls.push(['entities', projectId]); return { projectId: projectId ?? 'p1', library: { entities: [{ name: 'Rudy' }] }, warnings: [] }; },
@@ -44,6 +46,8 @@ function fakeClient() {
     shots: async (projectId) => { calls.push(['shots', projectId]); return { projectId: projectId ?? 'p1', shots: [{ id: 'shot_4', gate: { ok: false, problems: ['not approved'] }, videoCost: 7 }] }; },
     shotsImport: async (body) => { calls.push(['importShots', body]); return { format: 'json', shots: 1, totalCost: 7, added: [{ shotId: 'shot_4', stillJobId: 's1', videoCost: 7, warnings: [] }] }; },
     anchor: async (body) => { calls.push(['anchor', body]); return { shot: { id: body.shotId }, approval: { mediaId: 'ffffffff-0000-4000-8000-000000000006' }, video: { id: 'v1', expectedCost: 4 } }; },
+    qcSet: async (body) => { calls.push(['qcSet', body]); return { id: body.id, state: 'done', qc: { checkedAt: 1790000000000, by: 'agent', checks: { technical: 'pass', ...body.checks }, verdict: 'regen', note: body.note ?? null } }; },
+    qcFix: async (body) => { calls.push(['qcFix', body]); return { check: body.check, action: 'appendNegatives', cost: '+1 video credit when approved', still: null, video: { id: 'v2', state: 'queued', expectedCost: 7 } }; },
   };
 }
 
@@ -55,7 +59,7 @@ test('initializes and lists the Flow Pilot tools; none can set the cap or clear 
   s.notify('notifications/initialized');
   const { result: { tools } } = await s.call('tools/list', {});
   const names = tools.map((t) => t.name);
-  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_anchor_still', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_import_shots', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_shots', 'flowpilot_status']);
+  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_anchor_still', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_import_shots', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_review', 'flowpilot_shots', 'flowpilot_status']);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
   assert.ok(!names.some((n) => /cap|halt|tab/.test(n)));
   await s.end();
@@ -141,8 +145,7 @@ test('the shot tools list the gate, import stills only, and anchor a finished st
   await s.end();
 });
 
-test('flowpilot_compose_prompt previews the text, and add_job advertises entities', async () => {
-  const client = fakeClient();
+test('flowpilot_compose_prompt previews the text, and add_job advertises entities', async () => {  const client = fakeClient();
   const s = session(client);
   await s.call('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
 
@@ -153,5 +156,41 @@ test('flowpilot_compose_prompt previews the text, and add_job advertises entitie
   assert.equal(composed.result.isError, false);
   assert.match(composed.result.content[0].text, /CHARACTER — RUDY/);
   assert.deepEqual(client.calls.at(-1), ['composePrompt', 'p1', { projectId: undefined, prompt: 'she turns', entities: ['Rudy'], durationS: 4 }]);
+  await s.end();
+});
+
+test('flowpilot_review reads a clip, records a verdict and takes one fix (§2.6)', async () => {
+  const client = fakeClient();
+  const s = session(client);
+  await s.call('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+
+  // Read: the record the extension kept, plus the fixes it implies and what each costs.
+  const read = await s.call('tools/call', { name: 'flowpilot_review', arguments: { id: 'jqc' } });
+  const view = JSON.parse(read.result.content[0].text);
+  assert.equal(view.reviewed, true);
+  assert.equal(view.verdict, 'regen');
+  assert.deepEqual(view.failed, ['wardrobe']);
+  assert.equal(view.actions[0].action, 'appendConsistencyBlock');
+  assert.match(view.actions[0].cost, /0 credits now/);
+
+  // Record: all five visible checks at once; technical is never asked for.
+  const recorded = await s.call('tools/call', {
+    name: 'flowpilot_review',
+    arguments: { id: 'j1', identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass', note: 'flat bronze' },
+  });
+  assert.equal(recorded.result.isError, false);
+  assert.deepEqual(client.calls.at(-1), ['qcSet', { id: 'j1', checks: { identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' }, note: 'flat bronze' }]);
+  const partial = await s.call('tools/call', { name: 'flowpilot_review', arguments: { id: 'j1', identity: 'pass' } });
+  assert.equal(partial.result.isError, true);
+  assert.match(partial.result.content[0].text, /wardrobe/);
+
+  // A fix is a click that queues the next job through the ordinary paths.
+  const fixed = await s.call('tools/call', { name: 'flowpilot_review', arguments: { id: 'jqc', fix: 'artefacts' } });
+  assert.equal(JSON.parse(fixed.result.content[0].text).video.id, 'v2');
+  assert.deepEqual(client.calls.at(-1), ['qcFix', { id: 'jqc', check: 'artefacts' }]);
+
+  // The tool advertises the five checks and one fix at a time — and nothing for cap or halt.
+  const tool = (await s.call('tools/list', {})).result.tools.find((t) => t.name === 'flowpilot_review');
+  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['artefacts', 'fix', 'id', 'identity', 'location', 'note', 'style', 'wardrobe']);
   await s.end();
 });

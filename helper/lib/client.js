@@ -64,5 +64,10 @@ export function createClient({ port, key }) {
     shotsImport: (body) => call('POST', '/shots/import', body),
     still: (body) => call('POST', '/shots/still', body),
     anchor: (body) => call('POST', '/shots/anchor', body),
+
+    // ---- The QC loop (report §2.6). A verdict is job metadata; a fix queues a new job through the
+    // ordinary paths. Neither clicks Generate, so the cap still gates any spend afterwards.
+    qcSet: (body) => call('POST', `/jobs/${encodeURIComponent(body.id)}/qc`, body),
+    qcFix: (body) => call('POST', `/jobs/${encodeURIComponent(body.id)}/qc-fix`, body),
   };
 }

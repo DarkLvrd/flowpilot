@@ -8,6 +8,7 @@ import { createHelper } from './server.js';
 import { createClient, paths, readKey, saveKey } from './client.js';
 import { describeSourcePhoto, normalizeRef } from './entities-file.js';
 import { entityBlock, promptBaseHash } from '../../extension/lib/entities.js';
+import { QC_VISIBLE, QC_RESULTS, reviewView, fixCostText } from '../../extension/lib/qc.js';
 
 const USAGE = `Usage: flowpilot <command>
 
@@ -49,6 +50,13 @@ const USAGE = `Usage: flowpilot <command>
                                         Approve the shot's still and create the video job. Without
                                         --media the finished still job's media id is used. The video
                                         job is queued, not started; approve it with 'approve'
+  qc <jobId> [--identity pass|fail ...] [--note TEXT] [--fix CHECK]
+                                        Review a finished clip. With no check flags it prints the
+                                        recorded verdict and the fixes it offers (with their cost).
+                                        Give all five visible checks at once to record a verdict;
+                                        technical is checked automatically from the job, never asked.
+                                        --fix CHECK queues the next job for one failed check (a free
+                                        still first, or a new video): nothing regenerates by itself
   doctor                    Check the setup
   install-claude [--config PATH]
                             Add (or update) the Flow Pilot server in your Claude Desktop config,
@@ -74,6 +82,9 @@ const OPTIONS = {
   entity: { type: 'string', multiple: true }, audio: { type: 'string' },
   // Shots (report §2.3-§2.5)
   media: { type: 'string' }, frame: { type: 'string' }, note: { type: 'string' },
+  // QC (report §2.6): the five visible checks, one result each, plus one fix at a time.
+  identity: { type: 'string' }, wardrobe: { type: 'string' }, location: { type: 'string' },
+  artefacts: { type: 'string' }, style: { type: 'string' }, fix: { type: 'string' },
 };
 
 class Usage extends Error {}
@@ -136,8 +147,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
         print(value, (v) => `Approved still ${v.approval.mediaId} for shot ${v.shot.id}; video job ${v.video.id} queued (${v.video.expectedCost == null ? 'cost shown in Flow' : `${v.video.expectedCost} credits`}).\nApprove it with \`flowpilot approve ${v.video.id}\` when the credits are yours to spend.`);
         return 0;
       }
-      case 'prompts': {
-        needKey();
+      case 'prompts': {        needKey();
         const job = await client().job(id());
         if (!job.promptParts?.length) throw new Error(`Job ${job.id} was queued without entities, so it has no composed parts; its prompt is what was typed`);
         print({ id: job.id, prompt: job.prompt, parts: job.promptParts }, (v) => formatPrompt(v));
@@ -150,6 +160,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
         print(composed, formatPrompt);
         return 0;
       }
+      case 'qc': return await qcCommand(id(), o, { client: client(), needKey, print });
       case 'doctor': return await doctor(p, client(), out, { env, probeMcp, config: o.config });
       default: throw new Usage(`Unknown command: ${cmd}`);
     }
@@ -187,6 +198,9 @@ async function mcp(p, env, err, { input, output } = {}) {
     shotsImport: (body) => withHelper(() => real.shotsImport(body)),
     still: (body) => withHelper(() => real.still(body)),
     anchor: (body) => withHelper(() => real.anchor(body)),
+    // The QC loop (report §2.6): job data too — a verdict, or a fix that only queues a job.
+    qcSet: (body) => withHelper(() => real.qcSet(body)),
+    qcFix: (body) => withHelper(() => real.qcFix(body)),
   };
   const onSignal = () => { helper.stopNow(); process.exit(0); };
   process.once('SIGINT', onSignal);
@@ -435,6 +449,71 @@ function formatShotsImport({ format, shots, totalCost, added = [] }) {
   }
   lines.push('Finish the stills, look at them, then: flowpilot anchor <shotId> --media <mediaId>');
   return lines.join('\n');
+}
+
+// ---- QC: review a finished clip, record a verdict, take one fix (report §2.6) ----------------
+
+async function qcCommand(id, o, { client, needKey, print }) {
+  needKey();
+  if (o.fix != null) {
+    const value = await client.qcFix({ id, check: String(o.fix).trim() });
+    print(value, formatQcFix);
+    return 0;
+  }
+  const checks = {};
+  for (const check of QC_VISIBLE) if (o[check] != null) checks[check] = String(o[check]).trim().toLowerCase();
+  if (Object.keys(checks).length === 0) {
+    // A read: the record the extension kept, with what each offered fix would cost. Nothing is
+    // written and nothing is queued.
+    const job = await client.job(id);
+    print(reviewView(job), formatReview);
+    return 0;
+  }
+  if (Object.keys(checks).length !== QC_VISIBLE.length) {
+    const missing = QC_VISIBLE.filter((c) => !(c in checks));
+    throw new Usage(`qc needs a result for every visible check at once; missing: ${missing.join(', ')} (e.g. --${missing[0]} pass|fail). technical is checked automatically from the job`);
+  }
+  const bad = Object.entries(checks).filter(([, v]) => !QC_RESULTS.includes(v));
+  if (bad.length) throw new Usage(`qc results must be ${QC_RESULTS.join(' or ')}; got ${bad.map(([c, v]) => `${c}=${v}`).join(', ')}`);
+  const job = await client.qcSet({ id, checks, note: o.note ?? null });
+  print(reviewView(job), formatReview);
+  return 0;
+}
+
+function formatReview(view) {
+  const lines = [`${view.id} · ${view.name ?? ''} (${view.state})`.replace(' ·  ', ' ')];
+  if (!view.reviewed) {
+    lines.push('No QC verdict yet. Look at the clip, then record one — every visible check at once:');
+    lines.push(`  flowpilot qc ${view.id} --identity pass --wardrobe pass --location pass --artefacts pass --style pass [--note "what you saw"]`);
+    lines.push('technical (bytes, duration, resolution, aspect, non-empty) is checked automatically from the job, never asked.');
+    return lines.join('\n');
+  }
+  lines.push(`recorded ${new Date(view.qc.checkedAt).toISOString()} by ${view.qc.by} · verdict: ${view.verdict}`);
+  for (const check of ['technical', ...QC_VISIBLE]) lines.push(`  ${view.qc.checks[check] === 'pass' ? '✅' : '❌'} ${check}`);
+  if (view.qc.note) lines.push(`note: ${view.qc.note}`);
+  if (view.actions.length === 0) lines.push('Nothing failed: no fix is offered and nothing was queued.');
+  else {
+    lines.push('fixes offered (each is one click; nothing regenerates on its own):');
+    for (const a of view.actions) {
+      lines.push(`  ${a.check} → ${a.action}: ${a.cost}`);
+      if (a.block) lines.push(`      block to append: ${a.block}`);
+    }
+    lines.push(`Take one with: flowpilot qc ${view.id} --fix <check>`);
+  }
+  return lines.join('\n');
+}
+
+function formatQcFix(v) {
+  const made = v.still
+    ? `still job ${v.still.id} (${v.still.expectedCost === 0 ? '0 credits' : `${v.still.expectedCost} credits`})`
+    : `video job ${v.video.id} (${v.video.expectedCost == null ? 'price shown in Flow' : `${v.video.expectedCost} credits`})`;
+  return [
+    `Fix for ${v.check} → ${v.action}: queued ${made}. ${v.cost}.`,
+    v.still
+      ? `Approve the still yourself (flowpilot anchor <shotId> --media <mediaId>, or the Shots panel); the video job is created only then.`
+      : `The new video job is queued, not started: approve it yourself when the credits are yours to spend.`,
+    'Nothing already approved was rewritten, and the failed take stays on disk.',
+  ].join('\n');
 }
 
 function formatLibrary({ projectId, styleId = null, entities = [], warnings = [] }) {
