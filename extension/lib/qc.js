@@ -94,6 +94,8 @@ export function policyFor(check) {
 }
 
 const isResult = (v) => QC_RESULTS.includes(v);
+// A Flow Character's entity id, as Flow writes it (used to check what the generation record confirmed).
+const CHARACTER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The block a fix appends: the reviewer's own note (the car_consistency_block pattern) when there is
 // one, otherwise the policy's default line for that check. `null` for a check with no fix.
@@ -205,8 +207,6 @@ function normalizeCharacterUsed(used) {
   if (used.name != null && typeof used.name !== 'string') throw new Error('characterUsed.name must be text');
   return { entityId: used.entityId, name: used.name ?? null };
 }
-
-const CHARACTER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The parts a fix appends to. A job composed from the library already carries them; a plain job has
 // only its prompt text, which becomes the base part verbatim (kind "base", exactly what the composer
