@@ -36,7 +36,15 @@ async function world({ extension = true } = {}) {
       calls.push([m.cmd, m.args]);
       const value = m.cmd === 'status'
         ? { session: { cap: 10, spent: 4, halted: false }, workTab: { projectId: 'p1' }, jobs: [{ id: 'j1', name: 'fox', state: 'done', file: { path: '/x/fox.mp4' } }] }
-        : { id: m.args.id ?? 'j2', state: m.cmd === 'addJob' ? 'queued' : 'approved', expectedCost: 4 };
+        : m.cmd === 'shots'
+          ? { projectId: 'p1', shots: [{ id: 'shot_4', scene: 4, mode: 'ingredients', gate: { ok: false, problems: ['not approved'] }, stillJob: { id: 's1', state: 'rendering' }, videoCost: 7 }] }
+          : m.cmd === 'importShots'
+            ? { format: 'json', totalCost: 7, shots: 1, added: [{ shotId: 'shot_4', stillJobId: 's1', videoCost: 7, warnings: ['Rufus is not approved'] }] }
+            : m.cmd === 'queueStill'
+              ? { shot: { id: m.args.shotId }, still: { id: 's2', expectedCost: 0 } }
+              : m.cmd === 'approveAnchor'
+                ? { shot: { id: m.args.shotId }, approval: { mediaId: 'ffffffff-0000-4000-8000-000000000006', frame: 'start' }, video: { id: 'v1', expectedCost: 4 } }
+                : { id: m.args.id ?? 'j2', state: m.cmd === 'addJob' ? 'queued' : 'approved', expectedCost: 4 };
       ws.send(JSON.stringify({ id: m.id, ok: true, value }));
     });
     await new Promise((r) => ws.once('open', r));
@@ -106,15 +114,54 @@ test('errors are short and the exit code is non-zero', async () => {
   await w.close();
 });
 
+test('shots list/import, still and anchor forward to the extension (§2.3-§2.5)', async () => {
+  const w = await world();
+  await w.run('pair', w.keyring.newCode().code);
+
+  const list = await w.run('shots', 'list', '--project', 'p1');
+  assert.equal(list.code, 0, list.text);
+  assert.match(list.text, /shot_4/);
+  assert.match(list.text, /🟡 still not approved/);
+  assert.deepEqual(w.calls.at(-1), ['shots', { projectId: 'p1' }]);
+
+  const file = join(w.home, 'shots.json');
+  writeFileSync(file, JSON.stringify([{ scene: 4, entities: ['Rudy'] }]));
+  const imported = await w.run('shots', 'import', '--project', 'p1', '--file', file);
+  assert.equal(imported.code, 0, imported.text);
+  assert.equal(w.calls.at(-1)[0], 'importShots');
+  assert.equal(w.calls.at(-1)[1].filename, file);
+  assert.match(imported.text, /still job s1/);
+  assert.match(imported.text, /Rufus is not approved/);
+
+  const still = await w.run('still', 'shot_4', '--project', 'p1', '--json');
+  assert.equal(JSON.parse(still.text).still.id, 's2');
+  assert.deepEqual(w.calls.at(-1), ['queueStill', { projectId: 'p1', shotId: 'shot_4' }]);
+
+  const mediaId = 'ffffffff-0000-4000-8000-000000000006';
+  const anchor = await w.run('anchor', 'shot_4', '--project', 'p1', '--media', mediaId, '--note', 'looks right', '--json');
+  assert.equal(anchor.code, 0, anchor.text);
+  const call = w.calls.at(-1);
+  assert.equal(call[0], 'approveAnchor');
+  assert.deepEqual({ ...call[1], frame: undefined }, { projectId: 'p1', shotId: 'shot_4', mediaId, note: 'looks right', frame: undefined });
+
+  assert.equal((await w.run('shots')).code, 0); // defaults to list
+  assert.equal((await w.run('still')).code, 2); // needs a shot id
+  assert.equal((await w.run('anchor')).code, 2);
+  assert.equal((await w.run('shots', 'fly')).code, 2);
+  await w.close();
+});
+
 test('doctor reports each part of the setup', async () => {
   const w = await world();
   // The published MCP surface, stated explicitly so a rename or a removal fails here: the seven job
-  // tools plus the five entity-library/prompt-composition tools (report §2.7). doctor's own check is
-  // that the server advertises exactly what mcp.js publishes.
+  // tools plus the five entity-library/prompt-composition tools (report §2.7, Phase 1) and the three
+  // shot/gate tools (Phase 2). doctor's own check is that the server advertises exactly what mcp.js
+  // publishes.
   const { TOOL_NAMES } = await import('../lib/mcp.js');
   const expected = [
     'flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download',
     'flowpilot_entity_list', 'flowpilot_entity_upsert', 'flowpilot_entity_approve', 'flowpilot_entity_supersede', 'flowpilot_compose_prompt',
+    'flowpilot_shots', 'flowpilot_import_shots', 'flowpilot_anchor_still',
   ];
   assert.deepEqual([...TOOL_NAMES].sort(), [...expected].sort());
   const tools = [...TOOL_NAMES];

@@ -58,5 +58,11 @@ export function createClient({ port, key }) {
     entityAct: (action, body) => call('POST', `/entities/${action}`, body),
     entityExport: (projectId) => call('GET', `/entities/export${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
     composePrompt: (projectId, spec) => call('POST', '/prompts', { projectId, spec }),
+
+    // ---- Shots: the still→anchor gate (report §2.3-§2.5). Nothing here clicks Generate.
+    shots: (projectId) => call('GET', `/shots${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    shotsImport: (body) => call('POST', '/shots/import', body),
+    still: (body) => call('POST', '/shots/still', body),
+    anchor: (body) => call('POST', '/shots/anchor', body),
   };
 }

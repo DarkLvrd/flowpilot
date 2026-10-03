@@ -116,6 +116,48 @@ const TOOLS = [
     },
     run: (c, a) => c.composePrompt(a.projectId, { ...a, projectId: undefined }),
   },
+
+  // ---- Shots and the still→anchor gate (report §2.3-§2.5). A video job for a shot is created only
+  // by flowpilot_anchor_still, and only once that shot's still is approved: there is no blocked job
+  // to clear, and the credit cap still gates the click afterwards.
+  {
+    name: 'flowpilot_shots',
+    description: 'The project\'s shots with their still gate and the cost of the video each would unlock. A shot is either anchored (Frames: its approved still is the video\'s first frame) or referenced (Ingredients: up to three entity photos). `gate.ok` is true only when the shot\'s current still is approved, and the video is never created before that.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' } }, additionalProperties: false },
+    run: (c, a) => c.shots(a.projectId),
+  },
+  {
+    name: 'flowpilot_import_shots',
+    description: 'Import a shot list (the design\'s storyboard JSON or CSV) and queue one FREE still image job per shot. No video job is created, no credits are spent, and no click happens: each shot\'s still must finish and be approved (flowpilot_anchor_still) before its video job exists. Entities are resolved by name and must be approved; unknown names fail the whole import. Rows: scene, name, beat, action, motion, setting, camera, audio, entities, mode (frames|ingredients), anchor.startFrame/endFrame, still.refs/outputPath, resolution, durationS, aspect, count, outputPath.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        text: { type: 'string', description: 'The storyboard JSON or CSV text' },
+        filename: { type: 'string', description: 'The file name, so the format can be detected (.json/.csv)' },
+        rows: { type: 'array', items: { type: 'object' }, description: 'Already-parsed rows, instead of text' },
+      },
+      additionalProperties: false,
+    },
+    run: (c, a) => c.shotsImport({ ...a }),
+  },
+  {
+    name: 'flowpilot_anchor_still',
+    description: 'Approve a shot\'s finished still and create its video job from it (the SHOW-BEFORE-SPEND gate). Without mediaId the shot\'s finished still job media id is used; pass mediaId to re-anchor to a different still (recorded in the ledger, never silent). The video job is queued but not approved: approve it with flowpilot_approve, and the credit cap still gates the click. Approving is an assertion (humans and agents may do it), so look at the still first (job.file.path).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        shotId: { type: 'string', description: 'The shot id, e.g. shot_4' },
+        mediaId: { type: 'string', description: 'The still\'s Flow media id; defaults to the shot\'s finished still job' },
+        frame: { type: 'string', enum: ['start', 'end'], description: 'Which frame this approval is (default start)' },
+        note: { type: 'string', description: 'Why it was approved, e.g. "identity and wardrobe match the sheet"' },
+      },
+      required: ['shotId'],
+      additionalProperties: false,
+    },
+    run: (c, a) => c.anchor({ ...a, shotId: need(a, 'shotId') }),
+  },
 ];
 
 function need(args, key) {

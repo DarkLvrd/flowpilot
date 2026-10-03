@@ -7,7 +7,7 @@ import { createJobStore } from './lib/jobs.js';
 import { createRunner } from './lib/runner.js';
 import { parseCatalog, creditCost } from './lib/catalog.js';
 import { buildJob, safeName } from './lib/jobspec.js';
-import { parseProjectMedia } from './lib/media.js';
+import { parseProjectMedia, parseMediaDetail } from './lib/media.js';
 import { newlyUploadedId, referenceNames } from './lib/refs.js';
 import { promotePatch, assertFreePreview, awaitingPreviewCount } from './lib/preview.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
@@ -21,6 +21,7 @@ import { buildDiagnostics } from './lib/diagnostics.js';
 import { FLOW_COMPAT, compatNote, compatReport } from './lib/compat.js';
 import { createEntityStore, createTemplateStore, resolveEntities, composePrompt as compose, libraryWarnings } from './lib/entities.js';
 import { loadDefaults } from './lib/prompt-assets.js';
+import { createShotStore, planShotImport, stillJobSpec, materializeShot, stillGate, approveStill, estimateShotCredits } from './lib/shots.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -46,6 +47,7 @@ async function mirrorLibrary(library) {
 }
 
 const entityStore = createEntityStore(chrome.storage.local, { onChange: (library) => { mirrorLibrary(library); } });
+const shotStore = createShotStore(chrome.storage.local);
 let templateStore = createTemplateStore(chrome.storage.local);
 
 // The asset-derived template (section order, audio line, negatives, camera/motion libraries) is the
@@ -311,6 +313,9 @@ async function selfCheck(tabId) {
 async function addJob(spec, { recipes, projectId } = {}) {
   const tab = await workTab.get();
   if (!tab) throw new Error('Pick a work tab first');
+  // A shot's anchor is written only by `approveAnchor`, from the approval ledger. Refusing it here
+  // keeps the gate airtight: no hand-written spec can claim a shot without its still being approved.
+  if (spec?.anchor != null) throw new Error("A job's anchor comes from the approval ledger: approve the shot's still (flowpilot anchor <shotId>), do not pass an anchor to addJob");
   const pid = projectId ?? spec.projectId ?? tab.projectId;
   // The catalog is read once per batch (import passes its own) but validated through the one path.
   const cat = recipes === undefined ? await catalogRecipes() : recipes;
@@ -412,10 +417,120 @@ async function promotePreview(id) {
   return store.apply(id, { type: 'promote', ...promotePatch(job, still.mediaId) });
 }
 
+// ---- Shots: the still gate and materialisation (report §2.3-§2.5, §2.7) ---------------------
+
+// A shot's still is a free image job; the video job for it exists only after the still is approved.
+// Nothing here clicks Generate: a still runs like any approved job (0 credits today), and a video
+// job is added `queued` and still waits for the person/dashboard approval and the credit cap.
+async function requireShot(projectId, shotId) {
+  const found = await shotStore.get(projectId, shotId);
+  if (!found) throw new Error(`No shot ${shotId} in project ${projectId}; import a shot list first (\`flowpilot shots import\`)`);
+  return found;
+}
+
+// `state === 'done'` still jobs whose output path a row may name as its anchor (report §2.7: an
+// anchor may be a media id, or a path that is itself a done still job's output).
+async function doneStillPaths() {
+  const map = {};
+  for (const j of await store.list()) {
+    if (j.state === 'done' && j.mediaId && j.settings?.kind === 'image' && j.file?.path) map[j.file.path] = j.mediaId;
+  }
+  return map;
+}
+
+async function shotLibrary(projectId, recipes) {
+  const [library, template] = await Promise.all([entityStore.library(projectId), templateStore.get(projectId)]);
+  return { library, template, recipes };
+}
+
+// What the dashboard shows and the CLI prints: the shot, its gate, its two jobs and the cost of the
+// video it would unlock — always before any click (docs/SPEC.md hard rules).
+async function shotSummaries(projectId) {
+  const [{ shots, approvals }, jobs, recipes] = await Promise.all([shotStore.list(projectId), store.list(), catalogRecipes().catch(() => null)]);
+  const byId = new Map(jobs.map((j) => [j.id, j]));
+  const library = await entityStore.library(projectId);
+  return shots.map((shot) => {
+    const gate = stillGate(shot, approvals);
+    let cost = null;
+    let costProblem = null;
+    try { cost = estimateShotCredits(shot, { library, recipes, projectId }).cost; } catch (e) { costProblem = e.message; }
+    return {
+      ...shot,
+      gate,
+      stillJob: shot.still?.jobId ? (byId.get(shot.still.jobId) ?? null) : null,
+      videoJob: shot.videoJobId ? (byId.get(shot.videoJobId) ?? null) : null,
+      videoCost: cost,
+      videoCostProblem: costProblem,
+    };
+  });
+}
+
+// Import a shot list: one still image job per row, never a video job. A row with an anchor but no
+// approved still imports its still job only and warns, which is the gate made visible instead of a
+// blocked video row (report §2.5).
+async function importShots({ projectId, text, filename, rows } = {}) {
+  const pid = await projectIdOf(projectId);
+  const recipes = await catalogRecipes();
+  const [{ library, template }, taken, knownStill] = await Promise.all([shotLibrary(pid), shotStore.list(pid).then((r) => r.shots.map((s) => s.id)), doneStillPaths()]);
+  const plan = planShotImport({ text, filename, rows, projectId: pid, library, template, recipes, knownStill, taken });
+  if (plan.anyError) {
+    const errors = plan.rows.filter((r) => !r.ok).map((r) => `row ${r.index}: ${r.error}`).join('; ');
+    throw new Error(`Import refused, nothing was queued — ${errors}`);
+  }
+  await shotStore.addMany(pid, plan.rows.map((r) => r.shot));
+  const added = [];
+  for (const row of plan.rows) {
+    const still = await store.add(row.stillJob);
+    await shotStore.recordStill(pid, row.shot.id, { jobId: still.id });
+    added.push({ shotId: row.shot.id, stillJobId: still.id, videoCost: row.cost, warnings: row.warnings });
+  }
+  return { format: plan.format, totalCost: plan.totalCost, shots: added.length, added };
+}
+
+// (Re)queue a shot's still. A new still supersedes any live approval first, so an approved still is
+// never silently replaced (report §2.5).
+async function queueStill({ projectId, shotId } = {}) {
+  const pid = await projectIdOf(projectId);
+  const { shot } = await requireShot(pid, shotId);
+  const recipes = await catalogRecipes();
+  const library = await entityStore.library(pid);
+  const stillJob = buildJob(stillJobSpec(shot, { library }), { projectId: pid, recipes });
+  // A still must be free: refuse to queue one whose image model reports any cost (flowpilot never
+  // spends without a person's click, and a still is the free look-ahead).
+  assertFreePreview(stillJob.expectedCost, stillJob.recipe);
+  const still = await store.add(stillJob);
+  const next = await shotStore.recordStill(pid, shotId, { jobId: still.id });
+  return { shot: next, still };
+}
+
+// Approve a shot's still and materialise the video job from it. One gate, one path: the video job is
+// built (and priced) *before* the approval is written, so a failed build never leaves a half state;
+// and `materializeShot` itself refuses unless the gate is open.
+async function approveAnchor({ projectId, shotId, mediaId, frame = 'start', note = null, approvedBy = 'dashboard' } = {}) {
+  const pid = await projectIdOf(projectId);
+  const { shot, approvals } = await requireShot(pid, shotId);
+  const recipes = await catalogRecipes();
+  const library = await entityStore.library(pid);
+  let media = mediaId ?? null;
+  if (!media && frame === 'start') media = shot.still?.mediaId ?? null;
+  if (!media && shot.still?.jobId) {
+    const stillJob = await store.get(shot.still.jobId);
+    media = stillJob?.mediaId ?? null;
+  }
+  if (!media) throw new Error(`Shot ${shotId} has no finished still to approve; queue one with \`flowpilot still ${shotId}\``);
+  const at = Date.now();
+  const entry = { mediaId: media, frame, note, jobId: shot.still?.jobId ?? null, at, approvedBy };
+  const simulated = approveStill(shot, approvals, entry);
+  const job = materializeShot(simulated.shot, simulated.approvals, { projectId: pid, recipes, library });
+  const approved = await shotStore.approve(pid, shotId, entry);
+  const added = await store.add(job);
+  await shotStore.attachVideo(pid, shotId, added.id);
+  return { shot: approved, approval: simulated.entry, video: added };
+}
+
 // The person's own action: bring the work tab (and its window) forward so Flow re-renders and the
 // queue can submit (LESSONS #23). Never called by the extension on its own.
-async function focusWorkTab() {
-  const tab = await workTab.get();
+async function focusWorkTab() {  const tab = await workTab.get();
   if (!tab) throw new Error('No work tab is set: open a Flow project and press "Use this tab"');
   const info = await chrome.tabs.get(tab.tabId).catch(() => null);
   await chrome.tabs.update(tab.tabId, { active: true });
@@ -533,6 +648,28 @@ const handlers = {
   },
   addJob: async ({ spec }) => addJob(spec),
   previewJob: async ({ spec }) => addPreviewJob(spec),
+  // Shots (report §2.3-§2.5): the still gate made visible. Reading never spends and never ticks;
+  // importing queues one free still per row and never a video job, and approving a still is the
+  // only path that creates the shot's video job (still `queued`, still behind the cap).
+  async shots({ projectId }) {
+    const pid = await projectIdOf(projectId);
+    return { projectId: pid, shots: await shotSummaries(pid) };
+  },
+  importShots: async (args) => importShots(args),
+  queueStill: async (args) => queueStill(args),
+  async approveAnchor(args, sender) {
+    return approveAnchor({ ...args, approvedBy: fromDashboard(sender) ? 'dashboard' : 'agent' });
+  },
+  // A signed thumbnail URL for a shot's still (read-only: the media-detail RPC only). The dashboard
+  // shows it inline; a block still halts everything, like every other Flow read.
+  async stillThumb({ projectId, mediaId }) {
+    await projectIdOf(projectId);
+    if (typeof mediaId !== 'string' || !/^[0-9a-f-]{36}$/.test(mediaId)) throw new Error('A thumbnail needs a Flow media id');
+    const r = await flow.call('mediaDetail', [mediaId]);
+    if (r.kind === 'blocked') { await store.halt(r.message); throw new Error(`Halted: ${r.message}`); }
+    if (!r.ok) throw new Error(`${RPC.mediaDetail}: ${r.message}`);
+    return { mediaId, url: parseMediaDetail(r.data, 'image').url };
+  },
   // Storyboard import: preview plans and prices; import validates all rows again and refuses the
   // whole batch on any bad row, so a partial import can never happen (decision 3).
   previewImport: async ({ text, filename, template, presetId }) => {
@@ -665,6 +802,7 @@ const AGENT_COMMANDS = new Set([
   'status', 'addJob', 'previewImport', 'importJobs', 'listPresets', 'approve', 'cancel', 'requeue', 'retryDownload',
   'entities', 'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede',
   'entityRemove', 'entitySetStyle', 'entityImport', 'entityExport', 'entityRestore', 'composePrompt',
+  'shots', 'importShots', 'queueStill', 'approveAnchor', 'stillThumb',
 ]);
 
 const bridge = createBridge({
@@ -684,7 +822,7 @@ const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.
 // Reads must not tick: a tick writes storage, which makes the dashboard read status again (a loop),
 // and entity/prompt commands never need a runner tick at all.
 const NO_TICK = new Set([
-  'status', 'selfCheck', 'previewImport', 'listPresets',
+  'status', 'selfCheck', 'previewImport', 'listPresets', 'shots', 'stillThumb',
   'entities', 'composePrompt', 'entityExport',
   'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede', 'entityRemove',
   'entitySetStyle', 'entityImport', 'entityRestore',

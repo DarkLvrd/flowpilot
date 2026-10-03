@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const ext = join(dirname(fileURLToPath(import.meta.url)), '..');
 const html = readFileSync(join(ext, 'dashboard/index.html'), 'utf8');
 const js = readFileSync(join(ext, 'dashboard/dashboard.js'), 'utf8');
+const panels = readFileSync(join(ext, 'dashboard/shots.js'), 'utf8');
 const sw = readFileSync(join(ext, 'sw.js'), 'utf8');
 
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
@@ -30,7 +31,8 @@ test('every label in the dashboard points at an element that exists', () => {
 });
 
 test('every command the dashboard sends is a service-worker handler', () => {
-  const cmds = new Set([...js.matchAll(/send\('([^']+)'/g)].map((m) => m[1]));
+  // The Shots panel sends its own commands from dashboard/shots.js, so both files are checked.
+  const cmds = new Set([...[js, panels].flatMap((src) => [...src.matchAll(/send\('([^']+)'/g)].map((m) => m[1]))]);
   assert.ok(cmds.size > 0);
   // Handlers are the keys of the `handlers` object in sw.js (both `name() {}` and `name: async () =>`).
   const start = sw.indexOf('const handlers = {');

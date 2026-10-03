@@ -40,6 +40,15 @@ const USAGE = `Usage: flowpilot <command>
   prompts <jobId> [--json]              The composed prompt parts and hashes (dry run, no spend)
   compose --prompt TEXT [--entity NAME ...] [--project P] [--audio A] [--json]
                                         Compose a prompt without queueing anything
+  shots import --project P --file shots.json|.csv
+                                        Plan one shot per row and queue its free still image job
+                                        (never a video job; approving the still is what creates it)
+  shots list --project P [--json]       The project's shots with their still gate and video cost
+  still <shotId> [--project P]          (Re)queue the shot's still image job (0 credits today)
+  anchor <shotId> [--media <mediaId>] [--frame start|end] [--note TEXT] [--project P]
+                                        Approve the shot's still and create the video job. Without
+                                        --media the finished still job's media id is used. The video
+                                        job is queued, not started; approve it with 'approve'
   doctor                    Check the setup
   install-claude [--config PATH]
                             Add (or update) the Flow Pilot server in your Claude Desktop config,
@@ -63,6 +72,8 @@ const OPTIONS = {
   'source-photo': { type: 'string' }, role: { type: 'string' }, label: { type: 'string' },
   reason: { type: 'string' }, file: { type: 'string' }, replace: { type: 'boolean' },
   entity: { type: 'string', multiple: true }, audio: { type: 'string' },
+  // Shots (report §2.3-§2.5)
+  media: { type: 'string' }, frame: { type: 'string' }, note: { type: 'string' },
 };
 
 class Usage extends Error {}
@@ -112,6 +123,19 @@ export async function main(argv, { env = process.env, out = console.log, err = c
       case 'approve': case 'cancel': case 'requeue': case 'retry-download':
         needKey(); print(await client().act(id(), cmd), formatJob); return 0;
       case 'entity': return await entityCommand(rest, o, { client: client(), needKey, out, print });
+      case 'shots': return await shotsCommand(rest, o, { client: client(), needKey, print });
+      case 'still': {
+        needKey();
+        const value = await client().still({ projectId: o.project, shotId: id() });
+        print(value, (v) => `Queued still ${v.still.id} for shot ${v.shot.id} (${v.still.expectedCost === 0 ? '0 credits' : `${v.still.expectedCost} credits`}). Approve it with \`flowpilot anchor ${v.shot.id}\` once it is done.`);
+        return 0;
+      }
+      case 'anchor': {
+        needKey();
+        const value = await client().anchor({ projectId: o.project, shotId: id(), mediaId: o.media, frame: o.frame, note: o.note });
+        print(value, (v) => `Approved still ${v.approval.mediaId} for shot ${v.shot.id}; video job ${v.video.id} queued (${v.video.expectedCost == null ? 'cost shown in Flow' : `${v.video.expectedCost} credits`}).\nApprove it with \`flowpilot approve ${v.video.id}\` when the credits are yours to spend.`);
+        return 0;
+      }
       case 'prompts': {
         needKey();
         const job = await client().job(id());
@@ -158,6 +182,11 @@ async function mcp(p, env, err, { input, output } = {}) {
     entityAct: (action, body) => withHelper(() => real.entityAct(action, body)),
     entityExport: (projectId) => withHelper(() => real.entityExport(projectId)),
     composePrompt: (projectId, spec) => withHelper(() => real.composePrompt(projectId, spec)),
+    // The shot plan and the still→anchor gate (report §2.3-§2.5): job data, like the entity library.
+    shots: (projectId) => withHelper(() => real.shots(projectId)),
+    shotsImport: (body) => withHelper(() => real.shotsImport(body)),
+    still: (body) => withHelper(() => real.still(body)),
+    anchor: (body) => withHelper(() => real.anchor(body)),
   };
   const onSignal = () => { helper.stopNow(); process.exit(0); };
   process.once('SIGINT', onSignal);
@@ -362,6 +391,50 @@ async function entityCommand(rest, o, { client, needKey, out, print }) {
     default:
       throw new Usage(`Unknown entity command: ${sub ?? ''}`);
   }
+}
+
+// ---- Shots: the still→anchor gate (report §2.3-§2.5) --------------------------------------
+
+async function shotsCommand(rest, o, { client, needKey, print }) {
+  const [sub] = rest;
+  needKey();
+  if (sub === 'import') {
+    if (!o.file) throw new Usage('shots import needs --file <shots.json|shots.csv>');
+    const text = readFileSync(o.file, 'utf8');
+    const value = await client.shotsImport({ projectId: o.project, text, filename: o.file });
+    print(value, formatShotsImport);
+    return 0;
+  }
+  if (sub === 'list' || sub == null) {
+    const { projectId, shots } = await client.shots(o.project);
+    print({ projectId, shots }, formatShots);
+    return 0;
+  }
+  throw new Usage(`Unknown shots command: ${sub ?? ''}`);
+}
+
+function formatShots({ projectId, shots = [] }) {
+  const lines = [`Project ${projectId ?? '(work tab)'} · ${shots.length} shot(s)`];
+  for (const s of shots) {
+    const still = s.still?.mediaId ?? (s.stillJob ? `${s.stillJob.state} (${s.stillJob.id})` : 'none queued');
+    const video = s.videoJob ? `${s.videoJob.state} (${s.videoJob.id})`
+      : s.videoCostProblem ? `cannot build — ${s.videoCostProblem}`
+      : `not created · ~${s.videoCost ?? '?'} credits`;
+    lines.push(`  ${s.gate?.ok ? '🟢 anchored' : '🟡 still not approved'}  ${s.id} (scene ${s.scene}, ${s.mode})`);
+    lines.push(`      still: ${still} · video: ${video}`);
+  }
+  if (!shots.length) lines.push('  (none yet: `flowpilot shots import --project P --file shots.json`)');
+  return lines.join('\n');
+}
+
+function formatShotsImport({ format, shots, totalCost, added = [] }) {
+  const lines = [`Imported ${shots} shot(s) from ${format} · videos total ${totalCost == null ? 'unknown' : `${totalCost} credits`}`, 'One free still job was queued per shot; a video job is created only when you approve a still.'];
+  for (const a of added) {
+    lines.push(`  ${a.shotId} → still job ${a.stillJobId} (0 credits) · video ${a.videoCost == null ? 'priced at approval' : `~${a.videoCost} credits`}`);
+    for (const w of a.warnings ?? []) lines.push(`      ⚠️ ${w}`);
+  }
+  lines.push('Finish the stills, look at them, then: flowpilot anchor <shotId> --media <mediaId>');
+  return lines.join('\n');
 }
 
 function formatLibrary({ projectId, styleId = null, entities = [], warnings = [] }) {

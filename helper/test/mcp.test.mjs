@@ -41,6 +41,9 @@ function fakeClient() {
     entityUpsert: async (projectId, entity) => { calls.push(['entityUpsert', projectId, entity]); return { id: 'ent_1', ...entity, version: 1, approvedAt: null }; },
     entityAct: async (action, body) => { calls.push([action, body]); return { id: 'ent_1', name: body.name ?? 'Rudy' }; },
     composePrompt: async (projectId, spec) => { calls.push(['composePrompt', projectId, spec]); return { projectId: projectId ?? 'p1', text: 'x\n\nCHARACTER — RUDY (identical in every shot): a man', parts: [], entities: [{ name: 'Rudy' }] }; },
+    shots: async (projectId) => { calls.push(['shots', projectId]); return { projectId: projectId ?? 'p1', shots: [{ id: 'shot_4', gate: { ok: false, problems: ['not approved'] }, videoCost: 7 }] }; },
+    shotsImport: async (body) => { calls.push(['importShots', body]); return { format: 'json', shots: 1, totalCost: 7, added: [{ shotId: 'shot_4', stillJobId: 's1', videoCost: 7, warnings: [] }] }; },
+    anchor: async (body) => { calls.push(['anchor', body]); return { shot: { id: body.shotId }, approval: { mediaId: 'ffffffff-0000-4000-8000-000000000006' }, video: { id: 'v1', expectedCost: 4 } }; },
   };
 }
 
@@ -52,7 +55,7 @@ test('initializes and lists the Flow Pilot tools; none can set the cap or clear 
   s.notify('notifications/initialized');
   const { result: { tools } } = await s.call('tools/list', {});
   const names = tools.map((t) => t.name);
-  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']);
+  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_anchor_still', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_import_shots', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_shots', 'flowpilot_status']);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
   assert.ok(!names.some((n) => /cap|halt|tab/.test(n)));
   await s.end();
@@ -112,6 +115,29 @@ test('the entity tools list, upsert, approve (and un-approve) and supersede a lo
   assert.deepEqual(client.calls.at(-1), ['unapprove', { projectId: 'p1', name: 'Rudy', reason: 'bad ref' }]);
   await s.call('tools/call', { name: 'flowpilot_entity_supersede', arguments: { projectId: 'p1', name: 'Rudy', ref: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', reason: 'flat bronze' } });
   assert.deepEqual(client.calls.at(-1), ['supersede', { projectId: 'p1', name: 'Rudy', ref: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', reason: 'flat bronze' }]);
+  await s.end();
+});
+
+test('the shot tools list the gate, import stills only, and anchor a finished still', async () => {
+  const client = fakeClient();
+  const s = session(client);
+  await s.call('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+
+  const listed = await s.call('tools/call', { name: 'flowpilot_shots', arguments: { projectId: 'p1' } });
+  assert.equal(JSON.parse(listed.result.content[0].text).shots[0].id, 'shot_4');
+  assert.deepEqual(client.calls.at(-1), ['shots', 'p1']);
+
+  const imported = await s.call('tools/call', { name: 'flowpilot_import_shots', arguments: { projectId: 'p1', text: '[{"scene":4}]' } });
+  assert.equal(imported.result.isError, false);
+  assert.deepEqual(client.calls.at(-1), ['importShots', { projectId: 'p1', text: '[{"scene":4}]' }]);
+
+  const anchored = await s.call('tools/call', { name: 'flowpilot_anchor_still', arguments: { projectId: 'p1', shotId: 'shot_4', note: 'looks right' } });
+  assert.equal(JSON.parse(anchored.result.content[0].text).video.id, 'v1');
+  assert.deepEqual(client.calls.at(-1), ['anchor', { projectId: 'p1', shotId: 'shot_4', note: 'looks right' }]);
+
+  const missing = await s.call('tools/call', { name: 'flowpilot_anchor_still', arguments: {} });
+  assert.equal(missing.result.isError, true);
+  assert.match(missing.result.content[0].text, /shotId/);
   await s.end();
 });
 

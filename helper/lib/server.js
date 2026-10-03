@@ -153,6 +153,22 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
       return callExtension(ENTITY_ACTIONS[m[1]], { ...body, projectId: body.projectId ?? q ?? undefined });
     }
 
+    // ---- Shots: the still→anchor gate (report §2.3-§2.5). All job data: an agent may import a shot
+    // list and approve a still, and the cap still gates the video click afterwards.
+    if (req.method === 'GET' && path === '/shots') return callExtension('shots', { projectId: q });
+    if (req.method === 'POST' && path === '/shots/import') {
+      const body = await readJson(req);
+      return callExtension('importShots', { ...body, projectId: body.projectId ?? q });
+    }
+    if (req.method === 'POST' && path === '/shots/still') {
+      const body = await readJson(req);
+      return callExtension('queueStill', { ...body, projectId: body.projectId ?? q });
+    }
+    if (req.method === 'POST' && path === '/shots/anchor') {
+      const body = await readJson(req);
+      return callExtension('approveAnchor', { ...body, projectId: body.projectId ?? q });
+    }
+
     let j = /^\/jobs\/([\w-]+)$/.exec(path);
     if (req.method === 'GET' && j) {
       const job = (await callExtension('status')).jobs?.find((x) => x.id === j[1]);

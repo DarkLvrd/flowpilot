@@ -5,12 +5,15 @@ import { FLOW_CHANGED_HINT } from '../lib/health.js';
 import { setFolderHandle, getFolderHandle, folderGranted } from '../lib/folder.js';
 import { applyNameTemplate } from '../lib/naming.js';
 import { createEntitiesPanel, entityNames } from './entities.js';
+import { createShotsPanel } from './shots.js';
 
 const $ = (id) => document.getElementById(id);
 const show = (id, e) => { const el = $(id); el.hidden = !e; el.textContent = e?.message ?? ''; };
 const act = (fn, errId = 'error') => async (...a) => { try { show(errId, null); await fn(...a); } catch (e) { show(errId, e); } };
 // The consistency entity library (report §2.1): rendered from this dashboard's own render().
 const entitiesPanel = createEntitiesPanel($('entities'));
+// The Shots panel and the still→anchor gate (report §2.5, Phase 2).
+const shotsPanel = createShotsPanel($('shots'));
 
 let shownCap; // the saved cap last written into the box; the box is only refreshed when it changes
 let importFilename = ''; // the chosen file's name, so format detection can use the extension
@@ -170,6 +173,7 @@ async function render() {
   }));
   $('jobs').replaceChildren(...rows.flat());
   entitiesPanel.render(s.workTab?.projectId ?? null);
+  shotsPanel.render(s.workTab?.projectId ?? null);
 }
 
 // ---- Storyboard import ------------------------------------------------------------------------
