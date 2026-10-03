@@ -21,9 +21,12 @@ export function parseCostLine(text = '') {
 }
 
 // job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null),
-//           references? { input, ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null } }
+//           references? { input, ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null,
+//                         characters: [{ entityId, name }] } }
 // page:   { tabId, url, prompt, summary, input, model, cost, generateEnabled, overlayOpen,
-//           attached? { ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null } }
+//           attached? { ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null,
+//                       characters: [/asb/ thumbnail token] },
+//           characterTokens? { [name]: token }, mentions? [{ entityId, referenceType, valid }] }
 // budget: { cap, spent, halted }
 // Returns { ok, problems: [human-readable strings] }.
 // The reference check (docs/SPEC.md hard rules, now also: the right references are attached,
@@ -53,6 +56,7 @@ export function checkBeforeSpend(job, page, budget) {
   }
 
   checkReferences(job.references, page.attached, problems);
+  checkCharacters(job.references, page, problems);
 
   const cost = spendCost(job, page, problems);
   if (budget.cap == null) problems.push('no session credit cap is set');
@@ -81,6 +85,32 @@ function checkReferences(want, attached, problems) {
 }
 
 const list = (ids) => (ids.length ? ids.join(', ') : 'none');
+
+// The character-attached check (report §8.1 step 4). A Flow Character exposes no id in the DOM, so
+// the only honest proof is: the chip is in the composer AND its thumbnail token is the byte-identical
+// one of the picker tile the driver picked for that character. A mention chip in the prompt is
+// verified by entity id, and Flow's own "this mention will be sent as plain text" marker
+// (`mention-chip-invalid`) fails the job rather than letting it spend on a degraded prompt (§3a).
+// Everything here is fail-closed: a missing chip, an unread token, an unasked-for chip or a mention
+// naming another entity all stop the click before the credits move.
+function checkCharacters(want, page, problems) {
+  const chars = want?.characters ?? [];
+  const attached = page.attached?.characters ?? [];
+  const tokens = page.characterTokens ?? {};
+  for (const c of chars) {
+    const token = tokens[c?.name];
+    if (!token) problems.push(`the character "${c?.name ?? c?.entityId}" was not attached through Flow's picker`);
+    else if (!attached.includes(token)) problems.push(`the composer has no character chip for "${c.name}" (the chip and its picker tile must match)`);
+  }
+  if (attached.length !== chars.length) {
+    problems.push(`the composer has ${attached.length} character chip(s), job wants ${chars.length}`);
+  }
+  for (const m of page.mentions ?? []) {
+    if (!m?.entityId) continue; // a mention chip the page did not label is not something to trust
+    if (m.valid === false) problems.push(`the prompt's @ mention for entity ${m.entityId} is invalid (Flow would send plain text: mention-chip-invalid)`);
+    else if (!chars.some((c) => c?.entityId === m.entityId)) problems.push(`the prompt mentions entity ${m.entityId}, which is not one of the job's characters`);
+  }
+}
 
 // The credits this click will spend, or null (with a problem recorded) when it can't be trusted.
 function spendCost(job, page, problems) {

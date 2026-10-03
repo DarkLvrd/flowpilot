@@ -121,6 +121,51 @@ test('a plain job stores references: null (addJob) — the check must not crash 
   assert.deepEqual(problems({ attached: undefined }, { references: null }), []);
 });
 
+// ---- the character-attached pre-spend check (report §8.1 step 4) ------------------------------
+
+const CHAR = '0bfec740-409e-42f5-80d1-82baac3349f3';
+const CHAR2 = '11111111-1111-4111-8111-111111111111';
+const TOKEN = 'ANqvLOZz3WfqTOKEN';
+// A character job: the entity id is on job.references, the tile token the driver read is on the
+// page, and the chip it left in the bar is reported as an attached token.
+const charJob = { references: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [{ entityId: CHAR, name: 'nancy' }] } };
+const charPage = { attached: { ingredients: [], firstFrame: null, lastFrame: null, characters: [TOKEN] }, characterTokens: { nancy: TOKEN }, mentions: [] };
+const charProblems = (p = {}, j = {}) => problems(p, j);
+
+test('a character chip whose token matches the tile it was picked from passes', () => {
+  assert.deepEqual(charProblems(charPage, charJob), []);
+  // A chip plus a photo reference: both checks pass side by side.
+  const withPhoto = { references: { ...charJob.references, ingredients: [REF_A] } };
+  assert.deepEqual(charProblems({ ...charPage, attached: { ...charPage.attached, ingredients: [REF_A] } }, withPhoto), []);
+});
+
+test('a missing character chip fails closed — the credits would buy a clip without the character', () => {
+  assert.match(charProblems({ ...charPage, attached: { ...charPage.attached, characters: [] } }, charJob).join(), /nancy/);
+  // The driver never saw the picker tile, so there is no token to compare against.
+  assert.match(charProblems({ ...charPage, characterTokens: {} }, charJob).join(), /nancy/);
+  // A different character's chip is attached: the token does not match.
+  assert.match(charProblems({ ...charPage, attached: { ...charPage.attached, characters: ['another-token'] } }, charJob).join(), /nancy/);
+  // A character chip nobody asked for is refused too.
+  assert.match(charProblems({ ...charPage, attached: { ...charPage.attached, characters: [TOKEN, 'extra'] }, characterTokens: { nancy: TOKEN } }, { references: null }).join(), /character/i);
+  // An old driver that reads no characters at all is refused, never trusted.
+  assert.match(charProblems({ attached: { ingredients: [], firstFrame: null, lastFrame: null } }, charJob).join(), /nancy/);
+});
+
+test('a mention chip must name the expected entity, and an invalid one fails closed', () => {
+  const valid = { ...charPage, mentions: [{ entityId: CHAR, referenceType: 'entity', valid: true }] };
+  assert.deepEqual(charProblems(valid, charJob), []);
+  // The mention names a different character: Flow would send the wrong entity.
+  assert.match(charProblems({ ...valid, mentions: [{ entityId: CHAR2, referenceType: 'entity', valid: true }] }, charJob).join(), /mention/i);
+  // Flow marks an unlisted id mention-chip-invalid and serialises it as plain text: fail closed.
+  assert.match(charProblems({ ...valid, mentions: [{ entityId: CHAR, referenceType: 'entity', valid: false }] }, charJob).join(), /invalid|mention-chip-invalid/i);
+  assert.match(charProblems({ ...charPage, mentions: [{ entityId: CHAR, referenceType: 'entity', valid: false }] }, charJob).join(), /invalid|mention-chip-invalid/i);
+});
+
+test('a job with no character is unaffected by the character check', () => {
+  assert.deepEqual(charProblems({ attached: { ingredients: [], firstFrame: null, lastFrame: null, characters: [] } }, { references: null }), []);
+  assert.deepEqual(problems({ attached: undefined }, { references: null }), []);
+});
+
 test('a free image may have no cost line, but a shown cost must still be 0', () => {
   const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0, modelFamily: '🍌 Nano Banana 2' };
   const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null, model: '🍌 Nano Banana 2' };
