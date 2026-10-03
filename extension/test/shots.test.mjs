@@ -15,7 +15,7 @@ import { fixture } from './helpers.mjs';
 import {
   SHOT_ROLES, SHOT_MODES, validateShot, planReferences, stillReferences, shotComposeInput,
   stillJobSpec, videoJobSpec, materializeShot, stillGate, approveStill, supersedeStill,
-  shotWithConsistencyBlock, createShotStore, SHOTS_KEY,
+  shotWithConsistencyBlock, createShotStore, SHOTS_KEY, estimateShotCredits,
 } from '../lib/shots.js';
 import { promptBaseHash } from '../lib/entities.js';
 
@@ -164,8 +164,10 @@ test('an unapproved entity or one without a locked media id refuses the plan', (
 
 // --- the Flow Character seam -----------------------------------------------------------------
 
+const CHARACTER = { name: 'Rudy', entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', primaryMediaId: 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca', referenceWorkflowIds: ['e3696fd0-eb73-4b82-a8a2-096fa4cb0dde'] };
+
 test('a flowCharacter entity is text-prefixed and its description block is left out', () => {
-  const shot = baseShot({ entities: [shotEntity({ name: 'Rudy', flowCharacter: { name: 'Rudy' } }), shotEntity({ entityId: 'ent_street', name: 'Street', mediaId: MEDIA.street, role: 'context' })], anchor: { startFrameMediaId: MEDIA.still } });
+  const shot = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', flowCharacter: CHARACTER }), shotEntity({ entityId: 'ent_street', name: 'Street', mediaId: MEDIA.street, role: 'context' })] });
   const plan = planReferences(shot);
   assert.deepEqual(plan.characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
   assert.deepEqual(plan.omitEntityBlocks, ['ent_rudy']);
@@ -174,8 +176,30 @@ test('a flowCharacter entity is text-prefixed and its description block is left 
   assert.match(input.prompt, /@Rudy/);
   assert.deepEqual(input.omitEntityBlocks, ['ent_rudy']);
   assert.deepEqual(input.entities, ['ent_rudy', 'ent_street']);
-  // Nothing about attaching a Flow Character is wired: the plan only describes the text change.
+  // The attach is the picker's job, not the plan's: the plan describes the id Flow must confirm.
   assert.equal('attach' in plan, false);
+  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: 'ent_rudy', name: 'Rudy' }]);
+});
+
+test('a flowCharacter entity needs no locked media id: Flow holds the face', () => {
+  const shot = baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', mediaId: null, flowCharacter: CHARACTER })] });
+  const plan = planReferences(shot);
+  assert.deepEqual(plan.ingredients, []); // no photo to attach: the character chip is the reference
+  assert.deepEqual(plan.characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  assert.deepEqual(videoJobSpec(shot, plan).refs, []);
+  assert.deepEqual(videoJobSpec(shot, plan).characters, [{ entityId: 'ent_rudy', name: 'Rudy' }]);
+  // The approval rule does not move: an unapproved character is still refused.
+  assert.throws(() => planReferences(baseShot({ mode: 'ingredients', entities: [shotEntity({ name: 'Rudy', mediaId: null, approvedAt: null, flowCharacter: CHARACTER })] })), /not approved/i);
+});
+
+// Flow replaces the ingredient bar with the start/end slots in Frames (report §6), so there is no
+// chip to attach and nothing the pre-spend check could confirm. The plan still describes the text
+// mention, but no job is built: refused before anything is queued.
+test('a Frames shot with a Flow Character is refused before a job is built', () => {
+  const shot = baseShot({ entities: [shotEntity({ name: 'Rudy', flowCharacter: CHARACTER })], anchor: { startFrameMediaId: MEDIA.still } });
+  assert.deepEqual(planReferences(shot).characters, [{ entityId: 'ent_rudy', name: 'Rudy', mention: '@Rudy' }]);
+  assert.throws(() => videoJobSpec(shot, planReferences(shot)), /Frames/i);
+  assert.throws(() => estimateShotCredits(shot, { recipes, library: library([entity({ flowCharacter: CHARACTER })]), projectId: PID }), /Frames/i);
 });
 
 // --- the still's references and job specs ----------------------------------------------------
@@ -215,6 +239,8 @@ test('the video spec is Frames when anchored and Ingredients when referenced', (
   assert.equal(ingredients.input, 'ingredients');
   assert.deepEqual(ingredients.refs, [MEDIA.rudy]);
   assert.equal(ingredients.firstFrame, undefined);
+  // A job with no character is unchanged: no `characters` field at all.
+  assert.equal('characters' in ingredients, false);
 });
 
 // --- the gate and the approval ledger --------------------------------------------------------

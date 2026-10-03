@@ -52,6 +52,30 @@ test('an image job takes Ingredients (1-3 reference photos) through the same val
   assert.throws(() => build({ kind: 'image', resolution: undefined, durationS: undefined, firstFrame: '/pics/start.png' }), /video/i);
 });
 
+// A Flow Character makes the job an Ingredients job even with no photo reference, and lands in
+// `referencePlan` so the driver can attach it and the pre-spend check can verify the entity id.
+test('a job with a Flow Character is an Ingredients job and carries the character in its plan', () => {
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const job = build({ characters: [char] });
+  assert.equal(job.settings.input, 'ingredients');
+  assert.equal(job.referencePlan.input, 'ingredients');
+  assert.deepEqual(job.referencePlan.ingredients, []);
+  assert.deepEqual(job.referencePlan.characters, [char]);
+  assert.equal(job.recipe, 'abra_r2v_4s_360p');
+  assert.equal(job.expectedCost, 4);
+  // A character and photo references can go together (the chip and the photo share the bar).
+  const both = build({ characters: [char], refs: ['aaaaaaaa-0000-4000-8000-000000000001'] });
+  assert.deepEqual(both.referencePlan.characters, [char]);
+  assert.equal(both.referencePlan.ingredients.length, 1);
+  // A job with no character keeps the old plan shape, byte for byte.
+  assert.equal('characters' in build({}), false);
+  // A malformed character fails closed at the one validation path.
+  assert.throws(() => build({ characters: [{ name: 'nancy' }] }), /entity id/i);
+  assert.throws(() => build({ characters: [{ entityId: char.entityId, name: 'nancy' }], input: 'frames', firstFrame: 'aaaaaaaa-0000-4000-8000-000000000001' }), /Frames/i);
+  // A still preview promotes into Frames, so it refuses a character too.
+  assert.throws(() => build({ characters: [char] }, { holdFirstFrame: true }), /still preview|Frames/i);
+});
+
 test('a shot-built video carries its anchor, media-id only', () => {
   const mediaId = 'aaaaaaaa-0000-4000-8000-000000000001';
   const job = build({ firstFrame: mediaId, anchor: { shotId: 'shot_4', startFrameMediaId: mediaId, endFrameMediaId: null, approvedAt: 42 } });

@@ -14,6 +14,25 @@ const ABS_PATH = /^(\/|[A-Za-z]:[\\/])/;
 // raising). Fail closed above it rather than let Flow silently drop extras.
 export const MAX_INGREDIENTS = 3;
 
+// Flow Characters share that same ingredient bar as a fifth chip kind (report §3b). Flow has its
+// own per-kind cap ("Maximum character ingredients reached") whose number is UNVERIFIED, so Flow
+// Pilot fails closed at its own conservative number rather than let Flow drop an extra silently.
+export const MAX_CHARACTERS = 3;
+const CHARACTER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// One Flow Character → { entityId, name }. Pure. The entity id is what Flow's own record echoes
+// back after a generation (report §5), so it is required: a character attached on its name alone
+// could never be verified, and the credits would be spent either way. Throws otherwise.
+export function classifyCharacter(character) {
+  const entityId = typeof character?.entityId === 'string' ? character.entityId.trim() : '';
+  if (!CHARACTER_ID.test(entityId)) {
+    throw new Error(`A Flow Character needs the entity id Flow gave it (a uuid), got ${JSON.stringify(character?.entityId)}; the name alone cannot be verified after the fact`);
+  }
+  const name = typeof character?.name === 'string' ? character.name.trim() : '';
+  if (name === '') throw new Error(`The character ${entityId} needs the name Flow shows on its picker tile`);
+  return { entityId, name };
+}
+
 // One reference → { kind: 'mediaId', mediaId } | { kind: 'path', path }. Throws on anything else.
 export function classifyRef(ref) {
   const v = typeof ref === 'string' ? ref.trim() : '';
@@ -25,29 +44,45 @@ export function classifyRef(ref) {
 // Validates a job's reference fields for its video input mode and returns the normalized shape
 // { input, ingredients: [classified…], firstFrame: classified|null, lastFrame: classified|null }.
 // Throws a human-readable error otherwise. `input` is one of 'text' | 'ingredients' | 'frames'.
-export function validateReferences({ input, refs = [], firstFrame, lastFrame } = {}) {
+export function validateReferences({ input, refs = [], firstFrame, lastFrame, characters = [] } = {}) {
   const has = (v) => v != null && v !== '';
+  const raw = Array.isArray(characters) ? characters : (characters == null ? [] : [characters]);
+  const chars = raw.map(classifyCharacter);
+  if (chars.length > MAX_CHARACTERS) throw new Error(`Flow Pilot attaches at most ${MAX_CHARACTERS} Flow Characters per job, got ${chars.length}`);
+  if (new Set(chars.map((c) => c.entityId)).size !== chars.length) throw new Error('The same Flow Character is listed twice in this job');
+  // The plan keeps its old shape when no character is asked for, so nothing downstream has to know
+  // about characters unless a job really uses one.
+  const withChars = (plan) => (chars.length ? { ...plan, characters: chars } : plan);
+
   if (input === 'text') {
     if ((refs?.length ?? 0) > 0 || has(firstFrame) || has(lastFrame)) {
       throw new Error('Text input takes no references; use the Ingredients or Frames input');
     }
-    return { input, ingredients: [], firstFrame: null, lastFrame: null };
+    return withChars({ input, ingredients: [], firstFrame: null, lastFrame: null });
   }
 
   if (input === 'ingredients') {
     if (has(firstFrame) || has(lastFrame)) throw new Error('Ingredients input has no first/last frame; use the Frames input for those');
     const list = Array.isArray(refs) ? refs : [];
-    if (list.length === 0) throw new Error('Ingredients input needs at least one reference image');
+    // A character is a reference Flow already holds, so a character-only job is a valid Ingredients
+    // job with an empty photo list; the driver attaches the chip through the picker.
+    if (list.length === 0 && chars.length === 0) throw new Error('Ingredients input needs at least one reference image');
     if (list.length > MAX_INGREDIENTS) throw new Error(`Flow's Ingredients takes at most ${MAX_INGREDIENTS} reference images, got ${list.length}`);
     const ingredients = list.map(classifyRef);
     const ids = ingredients.filter((r) => r.kind === 'mediaId').map((r) => r.mediaId);
     const paths = ingredients.filter((r) => r.kind === 'path').map((r) => r.path);
     if (new Set(ids).size !== ids.length || new Set(paths).size !== paths.length) throw new Error('Duplicate reference in the ingredients list');
-    return { input, ingredients, firstFrame: null, lastFrame: null };
+    return withChars({ input, ingredients, firstFrame: null, lastFrame: null });
   }
 
   if (input === 'frames') {
     if ((refs?.length ?? 0) > 0) throw new Error('Frames input takes a first/last frame, not an ingredients reference list');
+    // Frames replaces the ingredient bar with the start/end slots, so there is no character chip to
+    // attach and nothing the pre-spend check could confirm (report §6). Refuse instead of spending
+    // on a job whose character would silently degrade to plain text.
+    if (chars.length) {
+      throw new Error(`Frames takes no Flow Character (${chars.map((c) => c.name).join(', ')}): Flow's Frames composer has no character chip, so the attach could never be verified. Use the Ingredients input for a character job`);
+    }
     if (!has(firstFrame)) throw new Error('Frames input needs a first frame');
     const first = classifyRef(firstFrame);
     const last = has(lastFrame) ? classifyRef(lastFrame) : null;

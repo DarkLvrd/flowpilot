@@ -232,6 +232,18 @@ test('a fix for a clip that is not part of a shot is a new job from the same spe
   assert.equal(base.promptParts, undefined);
 });
 
+// A fix must not quietly change the job: a character the failed take carried stays on the fix, so
+// the pre-spend check still verifies the chip and the QC record still confirms the same entity.
+test('a fix keeps the Flow Character the failed take ran with', () => {
+  const char = { entityId: '0bfec740-409e-42f5-80d1-82baac3349f3', name: 'nancy' };
+  const base = { ...doneVideo(), name: 'scene_4', settings: { ...doneVideo().settings, input: 'ingredients', refs: [], characters: [char] }, referencePlan: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null, characters: [char] }, references: { ingredients: [], firstFrame: null, lastFrame: null, characters: [char] } };
+  const fixed = fixJobSpec(base, qcVerdict(withFail('style')).actions[0], [{ kind: 'base', ref: 'prompt', sha256: 'a'.repeat(64), text: 'x' }]);
+  assert.deepEqual(fixed.characters, [char]);
+  assert.equal(fixed.input, 'ingredients');
+  // A job without a character is unchanged: no `characters` field at all.
+  assert.equal('characters' in fixJobSpec(doneVideo(), qcVerdict(withFail('style')).actions[0], []), false);
+});
+
 test('a plain job with no composed parts starts from its own prompt, byte-verbatim', () => {
   const plain = { id: 'p1', name: 'plain', prompt: 'a red fox in snow', settings: { kind: 'video' } };
   const parts = jobPromptParts(plain);

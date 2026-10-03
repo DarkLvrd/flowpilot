@@ -94,7 +94,31 @@ export function validateEntity(entity) {
     if (!isMediaId(entity.primaryRefMediaId)) throw new Error(`Entity "${entity.name}": primaryRefMediaId must be a media id, never a path`);
     if (!seen.has(entity.primaryRefMediaId)) throw new Error(`Entity "${entity.name}": primaryRefMediaId is not one of its refs`);
   }
+  validateFlowCharacter(entity);
   return true;
+}
+
+// The Flow Character link (report §8.1 step 2), grown from `{ name }` to the ids Flow itself uses.
+// `name` is what the picker tile shows; `entityId` is what the generation's own record echoes back
+// (report §5), so it is required — a character linked by name alone could never be verified, and
+// the link is what the pre-spend check and the QC card trust. `primaryMediaId` is the character's
+// face image and `referenceWorkflowIds` its image references, both read from Zzl0ze; they are not
+// locked photo refs (a character's media is not an Ingredients tile), which is why they live here
+// rather than in `refs`. Fail closed on anything malformed.
+function validateFlowCharacter(entity) {
+  const fc = entity.flowCharacter;
+  const name = entity.name;
+  if (fc == null) return;
+  if (typeof fc !== 'object' || Array.isArray(fc)) throw new Error(`Entity "${name}": flowCharacter must be an object with the character's name and Flow entity id`);
+  if (typeof fc.name !== 'string' || fc.name.trim() === '') throw new Error(`Entity "${name}": flowCharacter needs the character's name as Flow shows it`);
+  if (!isMediaId(fc.entityId)) throw new Error(`Entity "${name}": flowCharacter needs the Flow entity id (a uuid), got ${JSON.stringify(fc.entityId)}; the name alone cannot be verified`);
+  if (fc.primaryMediaId != null && !isMediaId(fc.primaryMediaId)) throw new Error(`Entity "${name}": flowCharacter.primaryMediaId must be a Flow media id, got ${JSON.stringify(fc.primaryMediaId)}`);
+  if (fc.referenceWorkflowIds != null) {
+    if (!Array.isArray(fc.referenceWorkflowIds)) throw new Error(`Entity "${name}": flowCharacter.referenceWorkflowIds must be a list of Flow workflow ids`);
+    for (const id of fc.referenceWorkflowIds) {
+      if (!isMediaId(id)) throw new Error(`Entity "${name}": flowCharacter.referenceWorkflowIds must all be Flow ids, got ${JSON.stringify(id)}`);
+    }
+  }
 }
 
 export function normalizeLibrary(raw, projectId = raw?.projectId) {
@@ -125,7 +149,9 @@ export function libraryWarnings(library) {
   const labels = new Map();
   for (const e of library?.entities ?? []) {
     const refs = e.refs ?? [];
-    if (e.kind !== 'style' && refs.length === 0) {
+    // A linked Flow Character is not a missing reference: Flow holds the face, and the picker
+    // attaches it by entity id, so asking for a locked media id here would be noise.
+    if (e.kind !== 'style' && refs.length === 0 && !e.flowCharacter?.entityId) {
       out.push(`${e.name} has no locked reference yet: the block is text-only until a Flow media id is added`);
     }
     for (const ref of refs) {

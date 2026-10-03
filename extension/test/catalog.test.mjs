@@ -51,6 +51,9 @@ test('picks the Omni Flash recipe for each video input', () => {
   assert.equal(v('frames', { firstFrame: 'm1', lastFrame: 'm2' }), 'omni_flash_i2v_4s_first_last');
   assert.equal(v('ingredients', { refs: ['m1'], resolution: '360p', durationS: 8 }), 'abra_r2v_8s_360p');
   assert.equal(v('frames', { firstFrame: 'm1', lastFrame: 'm2', resolution: '360p' }), 'omni_flash_i2v_4s_first_last_360p');
+  // A Flow Character is a reference like an ingredient (report §3c): a character-only job is r2v,
+  // not text-to-video, and the paid capture's job is `abra_r2v_4s_360p`.
+  assert.equal(v('ingredients', { characters: [{ entityId: 'e1', name: 'nancy' }], resolution: '360p' }), 'abra_r2v_4s_360p');
 });
 
 test('picks the image recipe (recon: tiles show Nano Banana 2)', () => {

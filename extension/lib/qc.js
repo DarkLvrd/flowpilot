@@ -215,6 +215,9 @@ export function fixJobSpec(job = {}, action = {}, parts = [], { name = null } = 
     prompt: parts.map((p) => p.text).join('\n\n'),
     promptParts: parts,
     ...(job.entities?.length ? { entities: job.entities } : {}),
+    // A character the failed take carried must ride along, or the fix would quietly be a different
+    // job (and the pre-spend check would have nothing to verify against).
+    ...(settings.characters?.length ? { characters: settings.characters } : {}),
     ...(settings.resolution ? { resolution: settings.resolution } : {}),
     ...(Number.isFinite(settings.durationS) ? { durationS: settings.durationS } : {}),
     ...(settings.aspect ? { aspect: settings.aspect } : {}),

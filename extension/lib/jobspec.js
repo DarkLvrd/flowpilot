@@ -34,9 +34,13 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
     if (kind !== 'video') throw new Error('Only a video job can be held for a still preview');
     if ((spec.refs?.length ?? 0) > 0) throw new Error('A still preview uses Frames, not ingredient references');
     if (spec.firstFrame != null) throw new Error('A still preview builds the first frame from the still; do not give a first frame');
+    // The promoted job runs in Frames, where Flow has no character chip (report §6): a character
+    // would be dropped silently and the credits spent on a clip that never used it.
+    if ((spec.characters?.length ?? 0) > 0) throw new Error('A still preview runs in Frames and takes no Flow Character; queue the character job directly instead');
   }
   const hasFrameFields = spec.firstFrame != null || spec.lastFrame != null;
   const hasIngredientFields = (spec.refs?.length ?? 0) > 0;
+  const hasCharacterFields = (spec.characters?.length ?? 0) > 0;
   // Image jobs take Ingredients (1-3 reference photos) exactly like a video job; Frames stay a
   // video mode (there is no first/last frame for a still). Both go through validateReferences, so
   // an image reference gets the same caps, dedup and media-id/path classification as a video's.
@@ -45,13 +49,16 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   }
   // Infer the input when it isn't named: a frame field means Frames, references mean Ingredients,
   // otherwise plain text. validateReferences throws a clear error on a bad reference.
-  const rawInput = holdFirstFrame ? 'frames' : (spec.input ?? (hasFrameFields ? 'frames' : (hasIngredientFields ? 'ingredients' : 'text')));
+  // A character rides in the Ingredients bar, so it makes the job an Ingredients job even with no
+  // photo reference at all (report §3b/§8.1 step 3).
+  const rawInput = holdFirstFrame ? 'frames'
+    : (spec.input ?? (hasFrameFields ? 'frames' : ((hasIngredientFields || hasCharacterFields) ? 'ingredients' : 'text')));
   const referencePlan = kind === 'video'
     ? (holdFirstFrame
         ? { input: 'frames', ingredients: [], firstFrame: null, lastFrame: spec.lastFrame == null || spec.lastFrame === '' ? null : classifyRef(spec.lastFrame) }
-        : validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame }))
-    : (hasIngredientFields
-        ? validateReferences({ input: 'ingredients', refs: spec.refs })
+        : validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame, characters: spec.characters }))
+    : (hasIngredientFields || hasCharacterFields
+        ? validateReferences({ input: 'ingredients', refs: spec.refs, characters: spec.characters })
         : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null });
 
   const durationS = Number(spec.durationS ?? 4);
@@ -69,6 +76,10 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
     refs: spec.refs ?? [],
     firstFrame: spec.firstFrame ?? null,
     lastFrame: spec.lastFrame ?? null,
+    // A Flow Character is a reference as far as the recipe is concerned (r2v, report §3c); it is
+    // carried on the settings so the cost preview and the later `technicalCheck` price the job the
+    // same way, from the stored record alone.
+    ...(referencePlan.characters?.length ? { characters: referencePlan.characters } : {}),
   };
 
   const outputPath = spec.outputPath == null || spec.outputPath === '' ? undefined : String(spec.outputPath);

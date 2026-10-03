@@ -238,6 +238,50 @@ test('validateEntity and normalizeLibrary refuse malformed data instead of trust
   assert.deepEqual(emptyLibrary('p9'), { schema: 1, projectId: 'p9', styleId: null, entities: [], updatedAt: 0 });
 });
 
+// ---- the Flow Character link (report §8.1 step 2) --------------------------------------------
+
+const CHAR_ID = '0bfec740-409e-42f5-80d1-82baac3349f3';
+const CHAR_PRIMARY = 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca';
+const CHAR_REF = 'e3696fd0-eb73-4b82-a8a2-096fa4cb0dde';
+const flowCharacter = (over = {}) => ({ name: 'nancy', entityId: CHAR_ID, primaryMediaId: CHAR_PRIMARY, referenceWorkflowIds: [CHAR_REF], ...over });
+
+// The link grew from `{ name }` to the ids Flow itself uses: the name cannot be verified after the
+// fact, the entity id can (report §8.1 step 2). A malformed link fails closed rather than being
+// stored and attached on the name alone.
+test('a flowCharacter link is validated: the entity id is what makes it verifiable', () => {
+  assert.doesNotThrow(() => validateEntity(entity({ flowCharacter: flowCharacter() })));
+  assert.doesNotThrow(() => validateEntity(entity({ flowCharacter: { name: 'nancy', entityId: CHAR_ID } })));
+  assert.throws(() => validateEntity(entity({ flowCharacter: 'nancy' })), /flowCharacter/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: { name: '' } })), /name/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: { name: 'nancy' } })), /entity id/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: flowCharacter({ entityId: 'nancy' }) })), /entity id/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: flowCharacter({ primaryMediaId: '/Users/me/nancy.png' }) })), /primaryMediaId/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: flowCharacter({ referenceWorkflowIds: ['nope'] }) })), /referenceWorkflowIds/i);
+  assert.throws(() => validateEntity(entity({ flowCharacter: flowCharacter({ referenceWorkflowIds: 'w1' }) })), /referenceWorkflowIds/i);
+});
+
+// The approval rules do not move for a character: Flow holds its face, but a subject nobody has
+// approved still never reaches a job, and the description block stays out of the prompt.
+test('a flowCharacter entity still needs approval, and its description block stays out', () => {
+  const linked = entity({ flowCharacter: flowCharacter() });
+  assert.deepEqual(resolveEntities({ ...emptyLibrary('p1'), entities: [linked] }, ['Rudy']).map((e) => e.id), [linked.id]);
+  assert.throws(() => resolveEntities({ ...emptyLibrary('p1'), entities: [entity({ flowCharacter: flowCharacter(), approvedAt: null })] }, ['Rudy']), /not approved/i);
+  const composed = composePrompt({ prompt: '@nancy turns to camera', entities: [linked.id], omitEntityBlocks: [linked.id] }, { ...emptyLibrary('p1'), entities: [linked] }, template);
+  assert.equal(composed.parts.some((p) => p.kind === 'entity'), false);
+  assert.match(composed.text, /@nancy turns to camera/);
+});
+
+// A linked character is not a missing reference: Flow holds the face, so the library stops nagging
+// about a locked media id it will never have.
+test('libraryWarnings stops asking a flowCharacter entity for a locked reference', () => {
+  const linked = entity({ flowCharacter: flowCharacter(), refs: [], primaryRefMediaId: null });
+  const plain = entity({ id: 'ent_plain', name: 'Plain', refs: [], primaryRefMediaId: null });
+  const lib = { ...emptyLibrary('p1'), styleId: null, entities: [linked, plain] };
+  const warnings = libraryWarnings(lib).join('\n');
+  assert.doesNotMatch(warnings, /nancy|Rudy.*no locked reference/i);
+  assert.match(warnings, /Plain has no locked reference/);
+});
+
 test('the entity store keeps a per-project library, versions changes and survives a restart', async () => {
   const area = memoryArea();
   let at = 100;

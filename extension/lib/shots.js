@@ -116,8 +116,10 @@ const entitiesOf = (library) => (Array.isArray(library) ? library : library?.ent
 
 const requireComposable = (shot, e) => {
   if (e.approvedAt == null) throw new Error(`Entity "${e.name ?? e.entityId}" is not approved; approve it in the dashboard before planning shot ${shot.id}`);
-  if (!isMediaId(e.mediaId)) throw new Error(`Entity "${e.name ?? e.entityId}" has no locked reference media id; a shot's plan needs a Flow media id, never a path`);
-  return e;
+  // A linked Flow Character needs no locked media id: Flow holds the face, the prompt names it and
+  // the picker attaches it by entity id (report §8.1 step 2). The approval rule above is unchanged.
+  if (isMediaId(e.mediaId) || e.flowCharacter?.entityId) return e;
+  throw new Error(`Entity "${e.name ?? e.entityId}" has no locked reference media id; a shot's plan needs a Flow media id, never a path`);
 };
 
 // ---- reference planning (report §2.4) -------------------------------------------------------
@@ -152,10 +154,14 @@ export function planReferences(shot, library = null) {
       throw new Error(`Shot ${shot.id} is referenced (Ingredients) and cannot also be pinned to an approved still: a shot is either anchored or referenced (report §2.4)`);
     }
     if (inFrame.length === 0) throw new Error(`Shot ${shot.id} is an Ingredients shot with no in-frame entity; mark a subject inFrame or anchor the shot with a still`);
+    // Characters and photos share the one ingredient bar, so they are counted together: Flow
+    // refuses extras either way, and Flow Pilot fails closed rather than let one be dropped.
     if (inFrame.length > MAX_INGREDIENTS) {
       throw new Error(`Shot ${shot.id}: ${inFrame.length} entities are inFrame but Flow takes ${MAX_INGREDIENTS}: generate a composed still (which merges them) and use mode:frames, or mark some as role:context (text only)`);
     }
-    return { input: 'ingredients', ingredients: inFrame.map((e) => requireComposable(shot, e).mediaId), firstFrame: null, lastFrame: null, ...shared };
+    // A flowCharacter entity contributes a chip, not an id: only real media ids reach `ingredients`.
+    const usable = inFrame.map((e) => requireComposable(shot, e));
+    return { input: 'ingredients', ingredients: usable.map((e) => e.mediaId).filter(isMediaId), firstFrame: null, lastFrame: null, ...shared };
   }
 
   throw new Error(`Shot ${shot.id}: mode must be one of ${SHOT_MODES.join(', ')}`);
@@ -232,10 +238,20 @@ export function videoJobSpec(shot, plan, { hold = false } = {}) {
     count: shot.count,
     ...(shot.outputPath ? { outputPath: shot.outputPath } : {}),
   };
+  // The plan carries the characters when it was built from an Entities shot; the frozen shot record
+  // is the fallback (`hold` prices a Frames video before its plan exists).
+  const characters = (plan?.characters ?? characterMentions(shot).characters).map((c) => ({ entityId: c.entityId, name: c.name }));
+  const withCharacters = (spec) => (characters.length ? { ...spec, characters } : spec);
   if (plan?.input === 'frames' || hold) {
+    // In Frames Flow replaces the ingredient bar with the start/end slots, so a character chip
+    // cannot be attached and nothing could verify it (report §6). Refuse the job — a silent drop
+    // here would spend 4 credits on a clip that never used the character.
+    if (characters.length) {
+      throw new Error(`Shot ${shot.id} carries the Flow Character ${characters.map((c) => c.name).join(', ')} and runs in Frames: Flow's Frames composer has no character chip, so the attach could never be verified. Use mode:ingredients, or drop the character (report §6)`);
+    }
     return { ...base, input: 'frames', firstFrame: plan?.firstFrame ?? null, lastFrame: plan?.lastFrame ?? null };
   }
-  return { ...base, input: 'ingredients', refs: plan?.ingredients ?? [] };
+  return withCharacters({ ...base, input: 'ingredients', refs: plan?.ingredients ?? [] });
 }
 
 // ---- the approval ledger and the gate (report §2.5) -----------------------------------------

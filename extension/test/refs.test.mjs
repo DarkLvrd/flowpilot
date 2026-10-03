@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
 import { parseProjectMedia } from '../lib/media.js';
-import { classifyRef, validateReferences, newlyUploadedId, referenceNames, MAX_INGREDIENTS } from '../lib/refs.js';
+import { classifyRef, validateReferences, newlyUploadedId, referenceNames, MAX_INGREDIENTS, MAX_CHARACTERS } from '../lib/refs.js';
 import { fixture } from './helpers.mjs';
 
 const ID = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
@@ -56,6 +56,44 @@ test('frames input needs a first frame; last is optional; no extra refs', () => 
 
 test('an unknown input mode is refused', () => {
   assert.throws(() => validateReferences({ input: 'wat' }), /input/i);
+});
+
+// ---- Flow Characters (report §8.1 step 3): a character is an entity id, not an uploaded photo ---
+
+const CHAR = '0bfec740-409e-42f5-80d1-82baac3349f3';
+const CHAR2 = '11111111-1111-4111-8111-111111111111';
+
+// The plan keeps its old shape when no character is asked for, so nothing downstream changes.
+test('a job without a character keeps the old plan shape', () => {
+  assert.equal('characters' in validateReferences({ input: 'text' }), false);
+  assert.equal('characters' in validateReferences({ input: 'ingredients', refs: [ID] }), false);
+});
+
+test('a character rides along with the prompt: entity id and name, validated', () => {
+  const v = validateReferences({ input: 'text', characters: [{ entityId: CHAR, name: 'nancy' }] });
+  assert.deepEqual(v.characters, [{ entityId: CHAR, name: 'nancy' }]);
+  assert.deepEqual(v.ingredients, []);
+  // Flow holds the character, so an Ingredients job can be character-only — the picker attaches it.
+  assert.deepEqual(validateReferences({ input: 'ingredients', characters: [{ entityId: CHAR, name: 'nancy' }] }).ingredients, []);
+  assert.deepEqual(validateReferences({ input: 'ingredients', refs: [ID], characters: [{ entityId: CHAR, name: 'nancy' }] }).characters, [{ entityId: CHAR, name: 'nancy' }]);
+});
+
+test('a character without a usable id or name fails closed, never attached on a name alone', () => {
+  assert.throws(() => validateReferences({ input: 'text', characters: [{ name: 'nancy' }] }), /entity id/i);
+  assert.throws(() => validateReferences({ input: 'text', characters: [{ entityId: 'nancy', name: 'nancy' }] }), /entity id/i);
+  assert.throws(() => validateReferences({ input: 'text', characters: [{ entityId: CHAR, name: '  ' }] }), /name/i);
+  assert.throws(() => validateReferences({ input: 'text', characters: [{ entityId: CHAR, name: 'nancy' }, { entityId: CHAR, name: 'nancy' }] }), /twice|duplicate/i);
+  const many = Array.from({ length: MAX_CHARACTERS + 1 }, (_, i) => ({ entityId: `${i}1111111-1111-4111-8111-111111111111`, name: `c${i}` }));
+  assert.throws(() => validateReferences({ input: 'text', characters: many }), new RegExp(`${MAX_CHARACTERS}`));
+});
+
+// Frames replaces the ingredient bar with the start/end slots (report §6), so there is no chip to
+// attach and nothing to verify: a Frames job with a character is refused before it is ever queued.
+test('a Frames job refuses a character (its composer has no character chip)', () => {
+  assert.throws(() => validateReferences({ input: 'frames', firstFrame: ID, characters: [{ entityId: CHAR, name: 'nancy' }] }), /Frames/i);
+  assert.deepEqual(validateReferences({ input: 'frames', firstFrame: ID }), { input: 'frames', ingredients: [], firstFrame: { kind: 'mediaId', mediaId: ID }, lastFrame: null });
+  // A raw string is not a character record: refused, not silently dropped.
+  assert.throws(() => validateReferences({ input: 'text', characters: [CHAR2] }), /entity id/i);
 });
 
 test('referenceNames maps media ids to their Zzl0ze names (the driver matches picker tiles by name)', () => {

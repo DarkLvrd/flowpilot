@@ -33,7 +33,7 @@ export function creditCost(catalog, recipe, tier) {
 
 // The recipe Flow should run for these job settings. Flow's own UI picks the real recipe; this is
 // the expectation used for the cost preview and for matching the result record afterwards.
-export function recipeFor({ kind, model = 'nano-banana-2', input, durationS, resolution, refs = [], firstFrame, lastFrame }) {
+export function recipeFor({ kind, model = 'nano-banana-2', input, durationS, resolution, refs = [], characters = [], firstFrame, lastFrame }) {
   if (kind === 'image') {
     const recipe = IMAGE_RECIPES[model];
     if (!recipe) throw new Error(`Unknown image model: ${model}`);
@@ -50,8 +50,10 @@ export function recipeFor({ kind, model = 'nano-banana-2', input, durationS, res
       ? `omni_flash_i2v_${durationS}s_first_last${suffix}`
       : `abra_i2v_${durationS}s${suffix}`;
   }
-  // Ingredients with no references is plain text-to-video (inferred; same cost either way).
-  if (input === 'ingredients' && refs.length > 0) return `abra_r2v_${durationS}s${suffix}`;
+  // Ingredients with no references is plain text-to-video (inferred; same cost either way). A Flow
+  // Character is a reference too (it travels as a structured mention plus its chip, report §3c), so
+  // a character-only job is reference-to-video, not text-to-video.
+  if (input === 'ingredients' && (refs.length > 0 || characters.length > 0)) return `abra_r2v_${durationS}s${suffix}`;
   if (input === 'text' || input === 'ingredients') return `abra_t2v_${durationS}s${suffix}`;
   throw new Error(`Unknown video input: ${input}`);
 }
