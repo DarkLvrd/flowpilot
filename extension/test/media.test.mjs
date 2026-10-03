@@ -135,6 +135,51 @@ test('a record reads back the entity mention and the entity-reference list', () 
   assert.equal(record.prompt, "nancy  is in a Formula One car because this is her first time and she's looking kind of scared.");
 });
 
+// The live account wraps the text after a mention in a one-element list, the recon report recorded
+// it as a bare string, and the prompt a character job is matched by lives exactly there. Both forms
+// are read (verified live 2026-10-03 against project de7baa89…, record 010d55ad…).
+test('a character record\'s prompt is read from the mention form, live-list and bare-string alike', () => {
+  const MID = '11111111-1111-1111-1111-111111111111';
+  const WID = '22222222-2222-2222-2222-222222222222';
+  const mention = [null, [null, null, [ENTITY, 'nancy']]];
+  const record = (tail) => [MID, CHAR_PROJECT, WID, 'CAE', null, [[1_789_234_191, 0], null, null, null, null, 'thumb',
+    [null, null, [['nancy  turns to camera', null, [[mention, tail]]]], [null, [[ENTITY]]], 1]]];
+  for (const tail of [['  turns to camera'], '  turns to camera']) {
+    const parsed = parseProjectMedia([null, [], [record(tail)]]);
+    assert.equal(parsed[0].prompt, 'nancy  turns to camera');
+    assert.deepEqual(parsed[0].entityMentions, [{ entityId: ENTITY, name: 'nancy' }]);
+    assert.deepEqual(parsed[0].entityRefs, [ENTITY]);
+    // So the engine can match the finished job by the prompt it actually sent.
+    assert.equal(findResult(parsed, { prompt: 'nancy  turns to camera', since: 1, exclude: [] })?.mediaId, MID);
+  }
+  // A node that merely starts with a string is not the mention form.
+  assert.equal(parseProjectMedia([null, [], [[MID, CHAR_PROJECT, WID, 'CAE', null, [[1_789_234_191, 0], 'plain', null, null, null, 'thumb',
+    [null, null, [[['plain']]], null, 1]]]]])[0].prompt, 'plain');
+});
+
+// The paid character job (2026-10-03, 4 credits, abra_r2v_4s_360p): the real record Flow stored,
+// with the mention form whose first element is null and the entity-reference list inside the recipe
+// block. This is the shape the engine has to track and QC, so it is tested as it really is.
+test('a real character job\'s record is read: prompt, mention, entity refs, and matched by prompt', () => {
+  const inner = parseBatchResponse(fixture('Zzl0ze-character-video'), 'Zzl0ze').data;
+  const paid = parseProjectMedia(inner);
+  const rec = paid.find((m) => m.mediaId === '53a922e2-e516-4984-bc61-f3168a7a672b');
+  const PROMPT = "nancy  is in a Formula One car because this is her first time and she's looking kind of scared.";
+  assert.equal(rec.kind, 'video');
+  assert.equal(rec.recipe, 'abra_r2v_4s_360p');
+  // Not the workflow's own title ("Person in Formula One car"): the text Flow actually stored.
+  assert.equal(rec.prompt, PROMPT);
+  assert.deepEqual(rec.entityMentions, [{ entityId: ENTITY, name: 'nancy' }]);
+  assert.deepEqual(rec.entityRefs, [ENTITY]);
+  // Which is what the engine matches a submitted job by, and what QC cites.
+  assert.equal(findResult(paid, { prompt: PROMPT, since: 1, exclude: [] })?.mediaId, rec.mediaId);
+  assert.deepEqual(characterUsed(rec, [{ entityId: ENTITY, name: 'nancy' }]), { entityId: ENTITY, name: 'nancy' });
+  // The project's character list rides in the same response.
+  assert.deepEqual(parseEntities(inner), [{
+    entityId: ENTITY, projectId: CHAR_PROJECT, name: 'nancy', primaryMediaId: PRIMARY, referenceWorkflowIds: [REF_WORKFLOW],
+  }]);
+});
+
 test('characterUsed confirms only the character the record actually shows', () => {
   const record = parseProjectMedia(charInner).find((m) => m.entityMentions.length);
   assert.deepEqual(characterUsed(record, [{ entityId: ENTITY, name: 'nancy' }]), { entityId: ENTITY, name: 'nancy' });
