@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Flow Pilot — describe it once</title>
+<link rel="stylesheet" href="../ui.css">
+<body>
+  <h1>Describe it once</h1>
+  <p class="hint">Write one sentence about the scene. Flow Pilot turns it into a set of scene
+  prompts. Nothing is sent anywhere — this runs in your browser with no network.</p>
+
+  <label class="block" for="describe">One sentence</label>
+  <textarea id="describe" placeholder="a red fox running through snow at sunrise"></textarea>
+  <p>
+    <label for="scenes">Scenes</label>
+    <select id="scenes"></select>
+    <label for="style">Style (optional)</label>
+    <input id="style" placeholder="cinematic, watercolour…">
+    <label for="motion">Motion (optional)</label>
+    <input id="motion" placeholder="slow dolly in…">
+    <button id="make" class="inline">Make scene prompts</button>
+  </p>
+  <p class="hint" id="template"></p>
+  <p id="error" class="banner" hidden></p>
+
+  <div id="out"></div>
+
+  <p>
+    <button id="copyAll" class="inline">Copy all prompts</button>
+    <button id="dashboard" class="inline">Open the dashboard</button>
+  </p>
+  <p class="hint">Every prompt above is editable text — change it before you paste it into the
+  dashboard's prompt box (or <code>flowpilot add --prompt</code>).</p>
+
+  <script type="module" src="promptset.js"></script>
+</body>

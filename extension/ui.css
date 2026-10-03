@@ -20,3 +20,7 @@ textarea { min-height: 60px; }
 .link { color: #1a73e8; text-decoration: underline; cursor: pointer; }
 #previewTable td:last-child { color: #a50e0e; }
 #previewTable { margin-top: 8px; }
+
+/* Describe it once (promptset page) */
+label.block { display: block; margin-top: 8px; }
+textarea.prompt { min-height: 44px; width: 100%; box-sizing: border-box; }

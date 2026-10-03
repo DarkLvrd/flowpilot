@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers.mjs';
+import { expandPromptSet } from '../lib/promptset.js';
 
 const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
 const EXT = 'chrome-extension://abc/';
@@ -156,6 +157,15 @@ test('window focus and tab switches tick only while a job waits for the Flow tab
   assert.equal(await ticked(() => onFocus(1)), true);
   data['flowpilot.lastTick'].waiting = 'x';
   assert.equal(await ticked(() => onActivated({ tabId: 7 })), true);
+});
+
+// A prompt built by "describe it once" must be usable straight in the job form: same bytes, no
+// reformatting, so what the person approved is what the driver pastes.
+test('a prompt from the describe-it-once helper is accepted by the job form verbatim', async () => {
+  const [first] = expandPromptSet('a red fox in the snow', { scenes: 1, style: 'cinematic' });
+  const r = await send({ cmd: 'addJob', spec: { name: 'from-helper', prompt: first.prompt, kind: 'video', input: 'text', resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.prompt, first.prompt);
 });
 
 // ---- Preview-first ---------------------------------------------------------------------------
