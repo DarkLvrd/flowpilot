@@ -22,7 +22,8 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the settled decisions and hard rules, and
    prepared and submitted with the work tab in front — see LESSONS #23. If approved jobs are
    waiting for that, the popup and dashboard show it and a **Show the Flow tab** button brings the
    tab forward.)
-3. **Start the helper** (only needed for agents). From the repo:
+3. **Start the helper** (only needed for CLI agents; the MCP server starts one itself — see
+   **Use it from Claude Desktop**). From the repo:
 
    ```
    node helper/bin/flowpilot.js serve
@@ -154,7 +155,9 @@ flowpilot add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|7
              [--ref REF ...] [--first-frame REF] [--last-frame REF]
 flowpilot approve|cancel|requeue|retry-download <id>
 flowpilot doctor                       Check the setup
-flowpilot mcp                          Run as an MCP server on stdio
+flowpilot install-claude [--config PATH]
+                                       Add the MCP server to Claude Desktop (backup first)
+flowpilot mcp                          Run as an MCP server on stdio (starts the helper if needed)
 ```
 
 Add `--json` to any command for raw JSON. The credit cap, clearing a halt and choosing the work
@@ -185,6 +188,10 @@ character work as the CLI above.
 and `flowpilot_retry_download`. There is nothing for the cap, the halt or the work tab — those stay
 with the person in the dashboard.
 
+You do not have to start the helper first: on the first tool call the MCP server starts a helper of
+its own if none is listening, and stops only that one when it exits. A helper you started with
+`flowpilot serve` is reused and left alone. See **Use it from Claude Desktop** below.
+
 ### HTTP API
 
 The helper listens on `http://127.0.0.1:47615` only. All calls except `/health` and `/pair` need
@@ -201,6 +208,55 @@ The helper listens on `http://127.0.0.1:47615` only. All calls except `/health` 
 | `POST` | `/jobs/<id>/approve` \| `/cancel` \| `/requeue` \| `/retry-download` | act on a job |
 
 `FLOWPILOT_HOME` overrides `~/.flowpilot`; `FLOWPILOT_PORT` overrides the port.
+
+## Use it from Claude Desktop
+
+[Claude Desktop](https://claude.ai/download) can drive Flow Pilot with its tools, so you ask for a
+job in plain English and Claude queues it. Two things must be true first:
+
+- The **extension is installed in your Chromium browser and a Flow work tab is chosen** — steps 1
+  and 2 of the 2-minute setup above. Claude cannot do that part for you.
+- **Node.js 20 or newer is installed** (<https://nodejs.org>). The installer says so if it is missing.
+
+You do **not** need to keep a helper running, and you do **not** need a terminal after the two
+commands below: the MCP server starts a helper itself when Claude first uses a tool, and stops it
+when Claude exits.
+
+1. **Add the server to Claude.** With Node 20 or newer installed, run:
+
+   ```
+   node helper/bin/flowpilot.js install-claude
+   ```
+
+   (or `npx flowpilot install-claude`). It backs up your existing Claude config first, prints
+   exactly what it added, and never touches your other MCP servers. If you keep Flow Pilot's files
+   in a custom place, the installer copies `FLOWPILOT_HOME`/`FLOWPILOT_PORT` into the entry for you.
+
+2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's seven tools then appear in
+   Claude's tools list.
+
+3. **Pair this machine once.** Open the Flow Pilot dashboard, click **Pair an agent**, copy the
+   one-time code, and run:
+
+   ```
+   node helper/bin/flowpilot.js pair <CODE>
+   ```
+
+   The key is saved owner-only in `~/.flowpilot/key`. Only job specs and results cross the bridge —
+   never your cookies or tokens.
+
+4. **Check it.** Run `node helper/bin/flowpilot.js doctor`. The helper, pairing, MCP server, its
+   seven tools and the Claude config should each show ✅.
+
+Then, in Claude Desktop, type something like:
+
+> Queue four 6-second videos of a golden retriever puppy running through autumn leaves, using
+> `flowpilot_add_job`, then show me the queue with `flowpilot_status`.
+
+Claude queues the jobs as `queued`; nothing is spent until a job is approved and the Flow tab is in
+front. You approve in the dashboard (or ask Claude to call `flowpilot_approve`, which spends within
+the session cap you set). The finished files land in `Downloads/FlowPilot/<project>/`. The credit
+cap and clearing a halt stay yours in the dashboard — Claude cannot change them.
 
 ## The extension pin (trust-on-first-use)
 
