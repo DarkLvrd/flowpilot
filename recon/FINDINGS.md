@@ -118,6 +118,29 @@ Text-to-video, 360p 4 s, Ingredients mode, no references. Order after the click:
   first, then `flow-content.google/video/<mediaId>?Expires=…&Signature=…`. Taking the first one
   downloaded a JPEG; the magic-byte check rejected it. The reader now asks for the job's kind.
 
+## Image mode and image references (2026-10-03, read-only, 0 credits, CDP port 9333)
+
+Practice project `78d6e0a5-…`, one Flow tab, no Generate clicked, no credits spent. Read through the
+page's own DOM (the same controls the driver uses); the composer was restored (Video + Ingredients,
+settings panel closed, no attached reference, project root URL) afterwards.
+
+- **Image mode quotes 0 credits**: with Settings open and `Image` selected, Flow's own cost line
+  read `Generating will use 0 credits`. `Video` in the same panel read `4 credits` (360p, 4 s,
+  Ingredients). This is the confirmation the still step needs: a still is free today.
+- **An image job can take Ingredients.** In Image mode the composer still shows
+  `Add ingredients to the prompt box`, and the asset picker (`flow-add-menu-popover-content` ›
+  `flow-add-menu-asset-list`, confirm button `Add to prompt`) attaches a tile exactly as it does for
+  Video. After `Add to prompt` the page stayed on `/project/<pid>` — **no `flow-image-editor`, no
+  `flow-edit-image-prompt-box`, no `/edit/<workflowId>` URL** — and the attached media id was
+  readable from `flow-ingredient-bar` (`690eeca2-253d-4387-a2e7-941aa8592827`, the synthetic
+  `flowpilot-synth-ref.png`, the same id the ref test used). The chip's own remove control clears it.
+- **Correction to the 2026-10-01 note below.** "Image + reference traps the image editor" was
+  dependent on how the tile was selected (a bare tile click in the grid) or on a Flow build since
+  changed: attaching through the composer's own `Add ingredients` picker and `Add to prompt` in
+  **Image** mode does not open the editor on this build (Chrome 154, 2026-10-03). The driver still
+  checks the page URL before any click, so if a future build does route into the editor the job fails
+  before spending.
+
 ## Uploads and references (Ingredients + Frames, 2026-10-01, one synthetic image uploaded, 0 credits)
 
 Proven on the practice account by uploading one plain 16×16 teal PNG (never a photo of a person)
@@ -145,7 +168,9 @@ and attaching it; no Generate, no credits. The composer was restored to the proj
 - **Image + reference traps the image editor.** Selecting a tile while the composer is in **Image**
   mode (Nano Banana) switches it to `flow-edit-image-prompt-box` / `flow-image-editor` and the URL
   to `/project/<pid>/edit/<workflowId>` — that is the out-of-scope *edit* flow. Set Video +
-  Ingredients **before** attaching. Leaving the editor needs navigating back to `/project/<pid>`.
+  Ingredients **before** attaching. (Superseded 2026-10-03: see the image-mode section above — this
+  did not reproduce when the tile was chosen through the composer's own `Add ingredients` picker.)
+  Leaving that editor needs navigating back to `/project/<pid>`.
 - **Frames attach.** Settings → Video + Frames shows two slots labelled **`Start`** and **`End`**
   (plus a `Swap first and last frames` button) inside `flow-ingredient-bar`. Click a slot to open
   the same picker; select/upload, then `Add to prompt`. The filled slots show the

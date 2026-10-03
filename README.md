@@ -54,11 +54,21 @@ is overlaid on Flow's own page.
   button, the **Session credit cap** (set or raise it here; nothing is submitted past it), a **Batch
   / storyboard import** section, an **Add a job** form (name, prompt, **Preview first**, kind
   image/video, resolution, duration, aspect, count, and references — Ingredients or Frames, below),
-  the **Entities** panel (the consistency library, below) and the **Queue** table.
+  the **Entities** panel (the consistency library, below), the **Shots** panel and the **Queue**
+  table.
 - **Entities** — the per-project consistency library: drop in a photo or paste a locked Flow media
   id, give the subject a name and a description, and **Approve** it. Every job whose prompt was
   composed from the library then shows "Uses: Rudy" and a **Preview prompt** button with the exact
   text Flow will receive. See [Consistency](#consistency-characters-vehicles-and-locations).
+- **Shots (still first, video second)** — import a shot list in the **Shots** panel (or
+  `flowpilot shots import`). Each row gets one **free** still image job and nothing else, so no
+  credits can move for a shot you have not seen. When the still finishes it appears in the row;
+  press **Approve still** to record who approved it and when — that is the click that *creates* the
+  shot's video job, with its price shown before you press anything. The video's own approve button
+  stays disabled until then, and approving the video is what would spend (still inside the session
+  cap). **Queue a new still** supersedes the old approval first, so an approved still is never
+  silently replaced and a regenerated one is visibly new. See
+  [Consistency](#consistency-characters-vehicles-and-locations).
 - **Approvals** — each queued job shows an **Approve** button; jobs wait as `queued` until approved,
   then run from the work tab. Queued/approved/halted jobs can be **Cancel**led; a failed job that
   was never clicked can be **Re-queue**d, and one whose render finished can **Retry download**.
@@ -109,7 +119,11 @@ is overlaid on Flow's own page.
   Resume yourself — time passing does nothing, and there is no automatic retry anywhere.
 
 Storyboard import (JSON/CSV bulk queueing) and the folder picker are built (SPEC decisions 3 and
-5): the dashboard now adds jobs one at a time *or* a whole batch at once.
+5): the dashboard now adds jobs one at a time *or* a whole batch at once. A **shot list** is the
+consistency-aware sibling of that import — it queues a free still per shot and creates each video
+only after its still is approved; see
+[Consistency](#consistency-characters-vehicles-and-locations) and the **Shots** panel in the
+dashboard.
 
 ### Batch / storyboard import
 
@@ -193,10 +207,27 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
   They are user-editable data: the style lock becomes the project's style entity, the scene template
   gives the section order, and the camera and motion tables become the libraries the composer draws
   on. The test suite pins their sha256, so a paraphrase fails the build.
-- **Not here yet** (later phases in the design): shot plans and the still-to-anchor gate,
-  batch/storyboard import, the QC review loop with append-only consistency blocks, and Flow's own
-  `@Name` Characters. Naming entities on a job composes the prompt; it does not attach the reference
-  images for you - pass them with `--ref`/`--first-frame` as before.
+- **Shots and the still gate (Phase 2).** A **shot** is the unit of consistency: its scene text, its
+  subjects, and one reference plan. A shot is either **anchored** (`mode: frames` — its approved
+  still is the video's first frame) or **referenced** (`mode: ingredients` — up to three entity
+  photos carry identity), never both. With more than three in-frame subjects the composed still is
+  the merge point, and the plan says so. A video job for a shot is **never created** until its still
+  is approved, so there is no blocked job to clear and no credits can be priced around a frame
+  nobody looked at; approving a still *is* the action that builds the video job, and its price is
+  shown first. Image jobs now take Ingredients references too, so a still can be generated from the
+  same locked photos a video would use.
+- **A shot list in, stills out.** `flowpilot shots import --project P --file shots.json` (or the
+  Shots panel's import box) reads the design's storyboard rows — JSON or dotted CSV — resolves
+  `entities` by name against the library, and queues one free still per shot. Unknown names fail the
+  whole import; an unapproved entity is a warning and is left out. `flowpilot shots list` shows each
+  shot with its gate and the video cost; `flowpilot still <shotId>` (re)queues a still; `flowpilot
+  anchor <shotId> [--media <id>]` approves a finished still and creates the video job.
+- **Not here yet** (later phases in the design): the QC review loop with append-only consistency
+  blocks (`flowpilot qc`, the Review panel), and attaching Flow's own `@Name` Characters through the
+  picker. An entity that carries `flowCharacter` is already text-prefixed (`@Name`) and its
+  description block left out of the composed prompt — the text half is wired, the attach is the
+  Phase 3 seam and nothing clicks it. Naming entities on a job composes the prompt; for the still's
+  references the shot plan passes them itself.
 
 ## How agents use it
 
@@ -226,6 +257,12 @@ flowpilot entity ref --project P --name Rudy --ref <mediaId> [--role sheet] [--l
 flowpilot entity supersede --project P --name Rudy --ref <mediaId> --reason "flat bronze"
 flowpilot entity remove|style --project P [--name Rudy]
 flowpilot entity export|import --project P [--file lib.json] [--replace] | entity restore --project P
+flowpilot shots import --project P --file shots.json|.csv
+             One free still per row; approving a still creates the shot's video job
+flowpilot shots list --project P       Each shot, its still gate and the video's cost
+flowpilot still <shotId> [--project P] (Re)queue the shot's still image job (0 credits today)
+flowpilot anchor <shotId> [--media MEDIA_ID] [--frame start|end] [--note TEXT] [--project P]
+                                       Approve the still and create the video job (queued, not run)
 flowpilot prompts <jobId>              the composed prompt parts and hashes (dry run)
 flowpilot compose --prompt TEXT [--entity NAME ...] [--project P] [--audio A]
 flowpilot doctor                       Check the setup
@@ -238,13 +275,14 @@ Add `--json` to any command for raw JSON. The credit cap, clearing a halt and ch
 tab are dashboard-only. (Invoke as `node helper/bin/flowpilot.js <command>` if `flowpilot` is not
 on your `PATH`.)
 
-**References (face-matched character work).** A video job may carry reference photos, each a Flow
-media id or an absolute image path (`.png`/`.jpg`/`.webp`); the helper reads a path's bytes and
-Flow Pilot uploads it through Flow's own **Upload media** control, never sending cookies or tokens.
-**Ingredients** shape the whole video — `--ref` (repeat for up to three) makes a reference-to-video
-generation. **Frames** generate the video between a start and end photo — `--first-frame` (and an
-optional `--last-frame`). Before it spends, Flow Pilot checks the right references are attached,
-verified by media id. Example:
+**References (face-matched character work).** A job may carry reference photos, each a Flow media id
+or an absolute image path (`.png`/`.jpg`/`.webp`); the helper reads a path's bytes and Flow Pilot
+uploads it through Flow's own **Upload media** control, never sending cookies or tokens.
+**Ingredients** shape the whole generation — `--ref` (repeat for up to three) makes a
+reference-to-*video* generation for a video job and a reference-to-*image* one for a still
+(`--kind image`), so an approved still can carry a character's identity forward. **Frames**
+generate a video between a start and end photo — `--first-frame` (and an optional `--last-frame`).
+Before it spends, Flow Pilot checks the right references are attached, verified by media id. Example:
 
 ```
 flowpilot add --prompt "she turns to face the camera" --ref /Users/me/face.png --resolution 360p --duration 4
@@ -258,13 +296,16 @@ flowpilot add --prompt "a slow zoom in" --first-frame /Users/me/wide.png --last-
 `lastFrame` (Frames), each a Flow media id or an absolute image path — the same face-matched
 character work as the CLI above.
 
-`flowpilot mcp` runs an MCP server on stdio with twelve tools: `flowpilot_status`, `flowpilot_job`,
+`flowpilot mcp` runs an MCP server on stdio with fifteen tools: `flowpilot_status`, `flowpilot_job`,
 `flowpilot_add_job` (which also takes `entities` — approved names from the project library, composed
 into the prompt verbatim), `flowpilot_approve`, `flowpilot_cancel`, `flowpilot_requeue`,
 `flowpilot_retry_download`, `flowpilot_entity_list`, `flowpilot_entity_upsert`,
-`flowpilot_entity_approve` (with `approve: false` to un-approve), `flowpilot_entity_supersede` and
-`flowpilot_compose_prompt` (the exact text Flow will receive, with per-part hashes). There is nothing
-for the cap, the halt or the work tab — those stay with the person in the dashboard.
+`flowpilot_entity_approve` (with `approve: false` to un-approve), `flowpilot_entity_supersede`,
+`flowpilot_compose_prompt` (the exact text Flow will receive, with per-part hashes),
+`flowpilot_shots` (each shot, its still gate and the video's cost), `flowpilot_import_shots` (queues
+one free still per row, never a video) and `flowpilot_anchor_still` (approve a finished still and
+create its video job). There is nothing for the cap, the halt or the work tab — those stay with the
+person in the dashboard.
 
 You do not have to start the helper first: on the first tool call the MCP server starts a helper of
 its own if none is listening, and stops only that one when it exits. A helper you started with
@@ -289,6 +330,10 @@ The helper listens on `http://127.0.0.1:47615` only. All calls except `/health` 
 | `GET`  | `/entities/export?projectId=` | the library as JSON |
 | `POST` | `/entities/approve` \| `/unapprove` \| `/ref` \| `/supersede` \| `/remove` \| `/style` \| `/import` \| `/restore` | act on the library |
 | `POST` | `/prompts` | `{ projectId, spec }` — compose the exact prompt and part hashes (no spend) |
+| `GET`  | `/shots?projectId=` | the project's shots with their still gate, jobs and video cost |
+| `POST` | `/shots/import` | `{ projectId, text, filename }` — plan and queue one free still per row |
+| `POST` | `/shots/still` | `{ projectId, shotId }` — (re)queue a shot's still image job |
+| `POST` | `/shots/anchor` | `{ projectId, shotId, mediaId?, frame?, note? }` — approve the still, create the video job |
 
 `FLOWPILOT_HOME` overrides `~/.flowpilot`; `FLOWPILOT_PORT` overrides the port.
 
@@ -315,7 +360,7 @@ when Claude exits.
    exactly what it added, and never touches your other MCP servers. If you keep Flow Pilot's files
    in a custom place, the installer copies `FLOWPILOT_HOME`/`FLOWPILOT_PORT` into the entry for you.
 
-2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's twelve tools then appear in
+2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's fifteen tools then appear in
    Claude's tools list.
 
 3. **Pair this machine once.** Open the Flow Pilot dashboard, click **Pair an agent**, copy the
@@ -329,7 +374,7 @@ when Claude exits.
    never your cookies or tokens.
 
 4. **Check it.** Run `node helper/bin/flowpilot.js doctor`. The helper, pairing, MCP server, its
-   twelve tools and the Claude config should each show ✅.
+   fifteen tools and the Claude config should each show ✅.
 
 Then, in Claude Desktop, type something like:
 

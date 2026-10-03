@@ -24,6 +24,7 @@ export const FLOW_COMPAT = {
   proven: [
     'a full video job end to end on 2026-09-28: submit through Flow\'s own Generate, track, download, byte-check (360p 4 s, 4 credits; the account balance went 269 → 265)',
     'uploads and references on 2026-10-01: an image uploaded through Flow\'s own Upload media control, then attached as an Ingredient and as Frames, each read back by media id (0 credits)',
+    'image mode and image references on 2026-10-03 (read-only, 0 credits): Image mode\'s own cost line read 0 credits, and an image job\'s Ingredients attached through the composer\'s own Add ingredients picker + Add to prompt without opening the image editor, the id read back from flow-ingredient-bar',
     'the self-check and the pre-spend checks (tab, project, mode, verbatim prompt, cost, cap) on every submit since 2026-09-28',
   ],
   changed: [
