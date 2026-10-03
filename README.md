@@ -235,8 +235,9 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
   job; `identity`, `wardrobe`, `location`, `artefacts` and `style` need eyes. Flow Pilot never
   auto-approves or auto-fails a clip on a machine score: it **surfaces** the checks, **records** the
   verdict and **offers** the fix. The verdict is the design's record — `checkedAt`, `by` (human or
-  agent), the six `checks`, the `verdict` and the `note` — written as job metadata exactly like a
-  job's references: no state change, no click, no spend.
+  agent), the six `checks`, the `verdict` and the `note`, plus `characterUsed` when the job ran with
+  a Flow Character — written as job metadata exactly like a job's references: no state change, no
+  click, no spend.
 - **A fix is a click that appends, never a rewrite.** Every failure maps to one action in the
   design's table, shown with its cost before you take it: a still fix (`identity`, `wardrobe`,
   `location`) queues a **free still** — which supersedes the old approval, so the video comes only
@@ -250,11 +251,32 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
 - **Where you review it:** the dashboard's **Review** panel (one card per finished clip: the six
   ticks, the verdict, the note, and a **Fix** button per recorded failure), `flowpilot qc <jobId>`
   to read or record a verdict, and `flowpilot qc <jobId> --fix <check>` to take one.
-- **Not here yet** (the design's stretch): attaching Flow's own `@Name` Characters through the
-  picker. An entity that carries `flowCharacter` is already text-prefixed (`@Name`) and its
-  description block left out of the composed prompt — the text half is wired, the attach stays an
-  unwired seam and nothing clicks it. Naming entities on a job composes the prompt; for the still's
-  references the shot plan passes them itself.
+- **Flow's own Characters.** Flow holds *characters* for a project (its Characters tile: an entity
+  with an id, a face image and its own reference workflows). Flow Pilot reads that list —
+  `flowpilot characters`, the HTTP `/characters` route, `flowpilot_characters` over MCP, or the
+  dashboard's **Entities** panel — and an entity can carry the link:
+  `flowCharacter: { name, entityId, primaryMediaId, referenceWorkflowIds }`. The entity id is what
+  makes it verifiable (a name alone is not), and a linked character needs **no locked photo**: Flow
+  holds the face, the prompt names it and Flow's own picker attaches it. Approving it is still
+  required, like any other subject. `flowCharacter` is a link, not a locked reference: the primary
+  image is Flow's, not an Ingredients tile, which is why it lives beside `refs` instead of in them.
+- **A character is attached through the picker Flow Pilot already drives.** A character job is an
+  **Ingredients** job (`abra_r2v_*`), even with no photo reference at all, and the character chip is
+  attached by clicking the picker's **Characters** category and the tile, exactly as a photo is.
+  Before spending, `character-attached` verifies it two ways: the composer's
+  `flow-character-ingredient-chip` thumbnail must be byte-identical to the picker tile the driver
+  picked, and every `@name` mention in the prompt must name that same entity id and not be
+  `mention-chip-invalid` (Flow's own "I will send this as plain text" marker). Anything else fails
+  the job closed rather than spending on a clip that never used the character.
+- **A Frames job refuses a character.** In Frames Flow replaces the ingredient bar with the Start
+  and End slots, so there is no chip to attach — verified live 2026-10-03: picking a character from
+  the `@` menu in Frames yields `mention-chip-invalid` and would be sent as text. Instead of a
+  silent drop, the job is refused with the reason and the way out (use `mode: ingredients`).
+- **The QC card says whether the character was really used.** Flow echoes the character back in the
+  same project-contents response Flow Pilot already reads — a mention segment plus an entity
+  reference — so a finished job records `characterUsed: { entityId, name }` (or `null` when Flow did
+  not confirm it), and the Review card prints *verified in the generation record* instead of guessing
+  from the picture. The person still makes the verdict: this is evidence, not a machine score.
 
 ## How agents use it
 
@@ -283,6 +305,8 @@ flowpilot entity approve|unapprove --project P --name Rudy [--reason R]
 flowpilot entity ref --project P --name Rudy --ref <mediaId> [--role sheet] [--label rudy_sheet_v1]
 flowpilot entity supersede --project P --name Rudy --ref <mediaId> --reason "flat bronze"
 flowpilot entity remove|style --project P [--name Rudy]
+flowpilot characters [--project P]      The project's own Flow Characters (read-only, no credits):
+                                       the name, entity id and media id a flowCharacter link needs
 flowpilot entity export|import --project P [--file lib.json] [--replace] | entity restore --project P
 flowpilot shots import --project P --file shots.json|.csv
              One free still per row; approving a still creates the shot's video job
@@ -328,11 +352,12 @@ flowpilot add --prompt "a slow zoom in" --first-frame /Users/me/wide.png --last-
 `lastFrame` (Frames), each a Flow media id or an absolute image path — the same face-matched
 character work as the CLI above.
 
-`flowpilot mcp` runs an MCP server on stdio with sixteen tools: `flowpilot_status`, `flowpilot_job`,
+`flowpilot mcp` runs an MCP server on stdio with seventeen tools: `flowpilot_status`, `flowpilot_job`,
 `flowpilot_add_job` (which also takes `entities` — approved names from the project library, composed
 into the prompt verbatim), `flowpilot_approve`, `flowpilot_cancel`, `flowpilot_requeue`,
 `flowpilot_retry_download`, `flowpilot_entity_list`, `flowpilot_entity_upsert`,
 `flowpilot_entity_approve` (with `approve: false` to un-approve), `flowpilot_entity_supersede`,
+`flowpilot_characters` (the project's own Flow Characters, read-only),
 `flowpilot_compose_prompt` (the exact text Flow will receive, with per-part hashes),
 `flowpilot_shots` (each shot, its still gate and the video's cost), `flowpilot_import_shots` (queues
 one free still per row, never a video), `flowpilot_anchor_still` (approve a finished still and
@@ -360,6 +385,7 @@ The helper listens on `http://127.0.0.1:47615` only. All calls except `/health` 
 | `GET`  | `/jobs/<id>` | one job |
 | `POST` | `/jobs/<id>/approve` \| `/cancel` \| `/requeue` \| `/retry-download` | act on a job |
 | `GET`  | `/entities?projectId=` | the project's entity library, template and warnings |
+| `GET`  | `/characters?projectId=` | the project's own Flow Characters (read-only, no credits) |
 | `POST` | `/entities` | `{ projectId, entity }` — create or version an entity |
 | `GET`  | `/entities/export?projectId=` | the library as JSON |
 | `POST` | `/entities/approve` \| `/unapprove` \| `/ref` \| `/supersede` \| `/remove` \| `/style` \| `/import` \| `/restore` | act on the library |

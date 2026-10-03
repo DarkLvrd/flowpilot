@@ -206,3 +206,115 @@ Offline only; zero credits, nothing generated, nothing approved.
 - What a future read-only check would need: an extension page exposed to the devtools tool (or a
   helper connected to the practice profile), then a `done` video job's record — `state`, `mediaId`,
   `file.type`, `recipe`, `settings` — to confirm `technicalCheck` reads real records as expected.
+
+## 2026-10-03 — Flow Characters: the read side, the attach, and one paid capture
+
+Wiring Flow's own Characters into Flow Pilot (report `data/flowpilot-flow-characters/report.md`
+§8.1 steps 1-5). Flow build seen: `boq_labs-ai-sandbox-frontend_20261002.00_p0`, account
+`darkboyy320@gmail.com`, practice project `78d6e0a5-…`. One paid job, 4 credits, exactly once.
+
+### Zero credits first (CDP port 9333, read-only apart from Flow's own controls)
+
+- **The account's characters, through the new parser.** A read-only same-origin `Zzl0ze`
+  (`/FlowService.GetProjectContents`) for project `de7baa89-1896-4825-bf06-ab0853619277` returned
+  the entity list at JSON index 5 and `parseEntities` decoded it: `nancy`,
+  entity id `0bfec740-409e-42f5-80d1-82baac3349f3`, primary media
+  `b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca`, reference workflow
+  `e3696fd0-eb73-4b82-a8a2-096fa4cb0dde`. 10 media records in that project; two of them (images
+  `010d55ad-…`, `a886589d-…`) already carried a mention segment and an entity reference, so the
+  mention/ref readers are proven against data this account really produced, not just the report.
+- **The attach, through Flow's own picker.** Clicking `Add ingredients to the prompt box` → the
+  `Characters` rail item → the `nancy` tile attached the character. The picker tile's thumbnail and
+  the chip's `img.chip-image` are **byte-identical** (both
+  `https://lh3.googleusercontent.com/asb/ANqvLOafhQSOKW_4K7Ho0TWJy…`), which is the only identity a
+  character chip exposes. On this build the tile click attaches and closes the picker (there is no
+  `Add to prompt` to click on that route), exactly as `confirmIfPresent` assumes.
+- **Scoping matters.** The page held **three** `flow-character-ingredient-chip` elements and two
+  image chips, but only **one** chip was inside the composer's `flow-ingredient-bar`; the others sit
+  in hidden page chrome. A document-wide read would have double-counted the attach, so the reader is
+  scoped to `flow-prompt-box` › `flow-ingredient-bar` (as the existing media-id read already was).
+- **The `@` mention.** A trusted `Input.dispatchKeyEvent({type:'char'})` `@` opens the add-menu
+  popover (an untrusted event does not; the recon found the same). The Characters category listed
+  **nothing** until the asset picker had been opened once in that session — after that it listed
+  `nancy` (twice: the menu renders a duplicate entry). Choosing it inserted a real
+  `span.mention-chip`. On this build the chip carries **`data-mention-id` but not
+  `data-entity-id`** (the report recorded both), so the reader accepts either.
+- **The pre-spend check.** On the live page (character chip + typed mention + Flow's own
+  `Generating will use 4 credits` line), `checkBeforeSpend` returned `{ ok: true, problems: [] }`.
+  It fails closed, in order, on: a mention naming another entity; no token read off the picker tile;
+  no chip in the composer; and Flow marking the mention `mention-chip-invalid`. Each was reproduced
+  against the same live snapshot.
+- **Frames.** Switching to `Video + Frames` removed the `Add ingredients to the prompt box` button
+  (the bar becomes `Start | swap_horiz | End`), so the *chip* route is unavailable. The `@` menu
+  still offered `nancy`, but choosing it produced
+  `class="mention-chip mention-chip-invalid"` — Flow's own marker that the id will be serialised as
+  plain text. So Flow's Frames composer does **not** accept a character; a Frames job with one is
+  refused before it is queued rather than silently degraded.
+
+### The one paid job (`recon/raw/generate-1791066780422/`, 4 credits, balance 50 → 46)
+
+360p 4 s, `abra_r2v_4s_360p`, character chip **plus** a typed `@` mention, prompt
+`nancy  is in a Formula One car because this is her first time and she's looking kind of scared.`
+Flow's own cost line read `Generating will use 4 credits` (≤ 5) and the session cap was raised in
+the dashboard to exactly `spent 20 + 4 = 24` first. One click on Flow's own **Start generation**.
+No retry; no block (`UNUSUAL_ACTIVITY` or otherwise) appeared. **The balance moved (50 → 46): this
+paid run spent exactly what the cost line said.** The 4-credit question is therefore not "did it
+spend" but "what did it send"; the capture answers that.
+
+The job took the **`MZZa6b`** route (`/VideoFxService.BatchAsyncGenerateVideoReferenceImages`), not
+`YhhmEf` — the Ingredients/reference recipe, as the report predicted for a reference job.
+
+- **The mention's wire slot.** Inside the output message, the prompt travels as a structured content
+  list in the same slot a plain job uses for its rich prompt:
+  `[[[null,[null,null,["0bfec740-…","nancy"]]],["  is in a Formula One car…"]]]` — i.e. a segment
+  whose first element is the mention node `[null, [null, null, [entityId, name]]]` and whose second
+  is the text after the chip. So the entity id reaches the server as a **typed mention segment**, and
+  the same id is repeated as an **entity-reference list** in the recipe block's last slot
+  (`[["0bfec740-…"]]`). This is a *different* shape from the recon's code-read guess: the report
+  (§3c) expected field 3 of the mention sub-message; the live request carries it in the prompt
+  content list plus the entity-reference list, and it is the `MZZa6b` recipe that does it.
+- **Is a chip-only attach recorded?** Not independently, on this evidence. The request carries no
+  ingredient list at all (a photo reference job's `[[null, 4, "<mediaId>"]]` is absent), and the only
+  character data on the wire is the mention segment and the entity-ref list. The chip contributed no
+  reference entry of its own that this one job can be shown to separate from the mention — one spend
+  cannot tell whether the entity-ref list would survive without a mention, so a **chip-only,
+  no-mention** job remains unverified, and the reader treats both signals as evidence.
+- **The stored record.** The generate response already carried the finished record
+  (`53a922e2-e516-4984-bc61-f3168a7a672b`): recipe `abra_r2v_4s_360p`, the prompt with the double
+  space the mention leaves, the mention segment, and the entity reference. `characterUsed` therefore
+  resolves from `Zzl0ze` with no OCR and no guessing, and the Review card can say *verified in the
+  generation record*.
+- **Two live gaps the paid job exposed, both fixed.** On this record (a video job) the mention
+  content list's first element is **null**, and the entity-reference list sits **inside the recipe
+  block** — neither matched the readers as first written, so the record read the *workflow title*
+  (`Person in Formula One car`) as its prompt and found no entity reference. That would have made a
+  character job untrackable (nothing to match by prompt) and unverifiable. Both shapes now read, and
+  the real record is the fixture `Zzl0ze-character-video.txt`.
+
+### What is still unverified (stated plainly)
+
+- **The extension's own new attach branch has not run live.** The extension loaded in the practice
+  Chrome is the **primary checkout's** build, not this worktree's, so `driver.prepare`'s character
+  branch could not execute without reloading the extension other lanes share. The live attach above
+  was performed with the *same clicks* (`Add ingredients` → `Characters` → tile) through the page,
+  and the check that decides the spend is this worktree's code — the driver branch itself rests on
+  the unit tests and the shared-contract smoke test.
+- **Frames on the wire.** The composer evidence above is decisive for Flow's own UI; whether a Frames
+  recipe would accept an entity mention at all needs another spend, which was not approved.
+- **The multi-character cap.** Flow's own message exists (`Maximum character ingredients reached`)
+  but its number is unknown; Flow Pilot fails closed at three, its own conservative limit.
+- **A chip-only job.** See above: whether a character attached *only* as a chip (no `@` mention) is
+  recorded on the generation is still unverified. The QC reader accepts either signal.
+
+### Housekeeping
+
+- One work tab throughout; no tab was opened, closed or reloaded over a job. The tab was moved to
+  `de7baa89-…` by URL for the attach and back to `78d6e0a5-…` afterwards, composer empty, no
+  overlays, `Video · Ingredients · 16:9 · 360p · 4s · x1`.
+- Session cap: raised in the dashboard to exactly 24 (spent 20 + the 4-credit cost) before the click,
+  then **put back to 20**, the value the captain left. The extension's own `spent` counter still reads
+  20 because the click was made outside it (it had to be: the mention must be typed by a person);
+  the account's real balance is 46, four credits lower than the extension believes.
+- Balance before/after read with the read-only `nzlxg`: **50 → 46**.
+- No helper was started or stopped; `recon/capture.mjs --generate` recorded the job and is not
+  running. `/tmp` probe scripts are deleted after this entry.
