@@ -82,6 +82,13 @@ is overlaid on Flow's own page.
   `extension/lib/rpc.js`.
 - **Credit cap** — cost is shown per job before it runs, and the session cap is a hard ceiling.
   **Only the dashboard can set or raise the cap** — agents cannot.
+- **Spend-and-safety receipt** — press **Save receipt file** and Flow Pilot writes one local Markdown
+  file for the batch or session: every row and its exact charge (a charge is only ever a Generate
+  click it recorded, never a quote), the cap that was in force, everything that was never submitted
+  or that Flow Pilot cannot prove was charged, each halt in Flow's own words, and where each file
+  landed. Prompt text stays out unless you tick **include prompt text** (a short prompt fingerprint
+  is always there). It is built from Flow Pilot's own records and is never uploaded — keep it, send
+  it, or delete it.
 - **Halts** — any `UNUSUAL_ACTIVITY` (or similar block) stops the whole queue and shows a banner
   with a **Clear halt** button; there is no automatic retry.
 
@@ -286,5 +293,7 @@ These are non-negotiable — see [`docs/SPEC.md`](docs/SPEC.md):
   0 credits, and a held video cannot be submitted until a person approves its still from the
   dashboard.
 - A downloaded file is accepted only after its bytes match its type.
+- Every credit figure it shows comes from its own records: a spend is claimed only for a Generate
+  click it recorded, and the receipt says so in plain words, including what it could not prove.
 
 MIT licensed. Loaded unpacked; no Chrome Web Store for now.

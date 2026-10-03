@@ -41,6 +41,12 @@ function costText(job) {
   return job.expectedCost === 0 ? '0 (free)' : `~${job.expectedCost}`;
 }
 
+// A receipt and a diagnostic bundle are local files. The dashboard writes them with the downloads
+// API and `saveAs`, so the person chooses where they land; nothing is uploaded, ever.
+async function saveText(filename, text, mime = 'text/markdown') {
+  await chrome.downloads.download({ url: `data:${mime};charset=utf-8,${encodeURIComponent(text)}`, filename, saveAs: true });
+}
+
 async function render() {
   const s = await send('status');
   $('halt').hidden = !s.session.halted;
@@ -56,6 +62,11 @@ async function render() {
     ? '✅ Helper running: agents can use Flow Pilot.'
     : '⚪ Helper not running (only needed for agents): start it with `npx flowpilot serve`.';
   $('pair').disabled = !s.helper?.connected;
+  $('receiptInfo').textContent = s.receipt
+    ? `Last receipt saved ${new Date(s.receipt.at).toLocaleString()} — ${s.receipt.summary.chargedRows} rows charged, `
+      + `${s.receipt.summary.chargedTotal} credits. Save again any time.`
+    : 'A receipt is one local file: every row, what was charged, what was halted and why, and where each file went.'
+      + ' Nothing is uploaded and Flow Pilot never writes it on its own.';
 
   // The front-tab gate, in plain words and with the count, plus the button that clears it. Flow only
   // re-renders in the front tab (LESSONS #23), so approved jobs wait there. A batch cannot run
@@ -236,6 +247,10 @@ $('clearHalt').onclick = act(() => send('clearHalt'));
 // the front tab). The extension never does this on its own.
 $('focusTab').onclick = act(() => send('focusWorkTab'));
 $('prompts').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('promptset/index.html') });
+$('saveReceipt').onclick = act(async () => {
+  const doc = await send('receipt', { includePrompts: $('includePrompts').checked });
+  await saveText(doc.filename, doc.text);
+});
 $('pair').onclick = act(async () => {
   const { code, expiresAt } = await send('pairCode');
   const until = new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

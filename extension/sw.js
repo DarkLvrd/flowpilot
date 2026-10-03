@@ -15,6 +15,9 @@ import { createBridge, HELPER_PORT } from './lib/bridge.js';
 import { planImport } from './lib/storyboard.js';
 import { normalizePreset } from './lib/presets.js';
 import * as folder from './lib/folder.js';
+import { buildReceipt } from './lib/receipt.js';
+
+const VERSION = chrome.runtime.getManifest().version;
 
 const PROJECT_URL = /^https:\/\/flow\.google\.com\/project\/([0-9a-f-]{36})$/;
 const CONTENT_ORIGIN = 'https://flow-content.google/';
@@ -389,6 +392,7 @@ const handlers = {
       workTab: boundTab,
       selfCheck: await local.get('flowpilot.selfCheck', null),
       lastTick: await local.get('flowpilot.lastTick', null),
+      receipt: await local.get('flowpilot.lastReceipt', null),
       helper: { connected: bridge.connected },
       counts: { awaitingPreview: awaitingPreviewCount(jobs), approved: approved.length },
       waitingFor,
@@ -475,6 +479,19 @@ const handlers = {
   async clearHalt(_msg, sender) {
     if (!fromDashboard(sender)) throw new Error('Only the dashboard can clear a halt');
     return store.clearHalt();
+  },
+  // A spend-and-safety receipt for this queue, built only from Flow Pilot's own records. The last
+  // one is kept in local storage so it is a record on the machine, not just a download; exporting
+  // it is a deliberate press in the dashboard (report §9.1).
+  async receipt({ includePrompts }, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can export a receipt');
+    const doc = buildReceipt({
+      jobs: await store.list(), session: await store.session(),
+      selfCheck: await local.get('flowpilot.selfCheck', null), version: VERSION,
+      now: Date.now(), includePrompts: !!includePrompts,
+    });
+    await local.set('flowpilot.lastReceipt', { at: doc.summary.at, filename: doc.filename, summary: doc.summary });
+    return doc;
   },
   // The one-time code a person gives an agent (docs/SPEC.md decision 9); the helper issues it.
   async pairCode(_msg, sender) {

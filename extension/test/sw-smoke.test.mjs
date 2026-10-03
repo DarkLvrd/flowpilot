@@ -20,6 +20,7 @@ globalThis.chrome = {
   runtime: {
     id: 'abc',
     getURL: (p) => EXT + p,
+    getManifest: () => ({ version: '0.1.0' }),
     onMessage: { addListener: (fn) => { listener = fn; } },
   },
   storage: {
@@ -374,4 +375,19 @@ test('a preset saves, lists and deletes, and its defaults apply to an imported b
 test('only the dashboard may save or delete presets', async () => {
   assert.match((await send({ cmd: 'savePreset', preset: { name: 'x' } }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
   assert.match((await send({ cmd: 'deletePreset', id: 'nope' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});
+
+// ---- Receipt (§9.1: a local, exportable spend-and-safety record) ------------------------------
+
+test('the dashboard exports a receipt from the records; the popup cannot', async () => {
+  const r = await send({ cmd: 'receipt' });
+  assert.equal(r.ok, true, r.error);
+  assert.match(r.value.filename, /^flowpilot-receipt-\d{4}-\d{2}-\d{2}-\d{4}\.md$/);
+  assert.match(r.value.text, /Flow Pilot — spend and safety receipt/);
+  assert.equal(r.value.summary.cap, 10); // the cap set earlier in this file
+  // Prompt text is user content: it stays out unless the person asks for it.
+  assert.ok(!r.value.text.includes('a red fox'), 'prompt text must not be in the receipt by default');
+  const withPrompts = await send({ cmd: 'receipt', includePrompts: true });
+  assert.ok(withPrompts.value.text.includes('a red fox'));
+  assert.match((await send({ cmd: 'receipt' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
 });
