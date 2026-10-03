@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createJobStore } from '../lib/jobs.js';
 import { createRunner } from '../lib/runner.js';
+import { planImport } from '../lib/storyboard.js';
+import { parseCatalog } from '../lib/catalog.js';
+import { parseBatchResponse } from '../lib/rpc.js';
+import { fixture } from './helpers.mjs';
 
 const PID = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
 const MP4 = new Uint8Array([0, 0, 0, 0x20, ...'ftypisom'].map((c) => (typeof c === 'string' ? c.charCodeAt(0) : c)).concat(Array(52).fill(0)));
@@ -331,6 +335,51 @@ test('a result that cannot be saved fails its job (Retry download can try again)
   assert.equal(after.state, 'failed');
   assert.match(after.error, /Could not save.*permission denied/);
   assert.equal((await store.get(b.id)).state, 'submitted');
+});
+
+// ---- Imported batches run through the same engine -------------------------------------------------
+
+const catalog = parseCatalog(parseBatchResponse(fixture('HTrJv'), 'HTrJv').data);
+const storyboard = 'scene,prompt,resolution,duration\nopening,a red fox,360p,4\nclosing,a blue fox,360p,4\n';
+
+const queueImport = async (store, plan) => {
+  const ids = [];
+  for (const row of plan.rows) {
+    assert.equal(row.ok, true, row.error);
+    const job = await store.add(row.job);
+    await store.apply(job.id, { type: 'approve' });
+    ids.push(job.id);
+  }
+  return ids;
+};
+
+test('an imported storyboard batch queues and submits through the real job model', async () => {
+  const { store, world, runner } = await setup({}, { cap: 100 });
+  const plan = planImport({ text: storyboard, filename: 'story.csv', projectId: PID, recipes: catalog, template: '{project}/{scene}-{index}' });
+  const ids = await queueImport(store, plan);
+
+  await runner.tick();
+  await runner.tick();
+
+  assert.deepEqual((await store.list()).map((j) => j.state), ['submitted', 'submitted']);
+  assert.equal((await store.session()).spent, 8);
+  assert.equal((await store.get(ids[0])).relativePath, `${PID}/opening-1`);
+  assert.ok(world.log.includes('prepare:opening') && world.log.includes('prepare:closing'));
+});
+
+test('an imported batch obeys the session credit cap exactly like single jobs', async () => {
+  const { store, runner } = await setup({}, { cap: 5 });
+  const plan = planImport({ text: storyboard, filename: 'story.csv', projectId: PID, recipes: catalog });
+  await queueImport(store, plan);
+
+  await runner.tick();
+  await runner.tick();
+
+  const after = await store.list();
+  assert.equal(after[0].state, 'submitted');
+  assert.equal(after[1].state, 'failed');
+  assert.match(after[1].error, /cap/);
+  assert.equal((await store.session()).spent, 4);
 });
 
 // ---- References (Ingredients and Frames) ------------------------------------------------------

@@ -11,6 +11,9 @@ import { parseProjectMedia } from './lib/media.js';
 import { newlyUploadedId, referenceNames } from './lib/refs.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
 import { createBridge, HELPER_PORT } from './lib/bridge.js';
+import { planImport } from './lib/storyboard.js';
+import { normalizePreset } from './lib/presets.js';
+import * as folder from './lib/folder.js';
 
 const PROJECT_URL = /^https:\/\/flow\.google\.com\/project\/([0-9a-f-]{36})$/;
 const CONTENT_ORIGIN = 'https://flow-content.google/';
@@ -161,16 +164,25 @@ const files = {
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());
   },
-  // Default location: Downloads/FlowPilot/<project>/<job-name>.<ext> (docs/SPEC.md decision 5).
-  // A job with an absolute outputPath goes through the helper; its extension follows the real bytes
-  // (an image Flow served as JPEG lands as .jpg). Without the helper it falls back to Downloads,
-  // and the saved path says where it really went.
+  // Default location: Downloads/FlowPilot/<relative>.<ext> (docs/SPEC.md decision 5). A job with an
+  // absolute outputPath goes through the helper instead. A folder the person picked for this session
+  // is written directly with the File System Access API; otherwise the browser download runs, and
+  // both never overwrite an existing file. `relative` is the job's naming-template path (or the
+  // historical <project>/<name>), so a batch's files land exactly where its storyboard asked.
   async save(job, bytes, ext) {
     if (job.outputPath && bridge.connected) {
       const path = job.outputPath.replace(/\.[^./\\]+$/, '') + '.' + ext;
       return (await bridge.request('writeFile', { path, data: toBase64(bytes) })).path;
     }
-    const filename = `FlowPilot/${safeName(job.projectName ?? job.projectId)}/${safeName(job.name)}.${ext}`;
+    const relative = `${job.relativePath ?? `${safeName(job.projectName ?? job.projectId)}/${safeName(job.name)}`}.${ext}`;
+
+    const root = await folder.getFolderHandle();
+    if (root && await folder.folderGranted(root)) {
+      const written = await folder.writeToFolder(root, relative, bytes);
+      return `${root.name}/${written}`;
+    }
+
+    const filename = `FlowPilot/${relative}`;
     const id = await chrome.downloads.download({
       url: `data:${MIME[ext]};base64,${toBase64(bytes)}`, filename, conflictAction: 'uniquify', saveAs: false,
     });
@@ -277,6 +289,29 @@ async function catalogRecipes() {
   return catalog.ok ? parseCatalog(catalog.data) : null;
 }
 
+// ---- Storyboards and presets (decision 3) ----------------------------------------------------
+
+const PRESETS_KEY = 'flowpilot.presets';
+const listPresetsStored = () => local.get(PRESETS_KEY, []);
+
+async function loadPreset(id) {
+  if (!id) return null;
+  const found = (await listPresetsStored()).find((p) => p.id === id);
+  return found ? normalizePreset(found) : null;
+}
+
+// Plans a batch through the same buildJob validation addJob uses: per-row errors, per-row cost and
+// the batch total, with a preset filling what a row left out. Never queues anything.
+async function planBatch({ text, filename, template, presetId }) {
+  const tab = await workTab.get();
+  if (!tab) throw new Error('Pick a work tab first');
+  const recipes = await catalogRecipes();
+  const preset = await loadPreset(presetId);
+  const taken = (await store.list()).map((j) => j.name);
+  const result = planImport({ text, filename, projectId: tab.projectId, recipes, template: template ?? preset?.template ?? null, preset, taken });
+  return { result, preset };
+}
+
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.
 const fromDashboard = (sender) => !!sender?.url?.startsWith(chrome.runtime.getURL('dashboard/'));
 
@@ -299,6 +334,58 @@ const handlers = {
   },
   selfCheck: async ({ tabId }) => selfCheck(tabId),
   addJob: async ({ spec }) => addJob(spec),
+  // Storyboard import: preview plans and prices; import validates all rows again and refuses the
+  // whole batch on any bad row, so a partial import can never happen (decision 3).
+  previewImport: async ({ text, filename, template, presetId }) => {
+    const { result } = await planBatch({ text, filename, template, presetId });
+    const session = await store.session();
+    const tab = await workTab.get();
+    return {
+      format: result.format,
+      rows: result.rows.map((r) => ({
+        index: r.index, scene: r.scene, ok: r.ok, error: r.error, cost: r.cost,
+        spec: r.spec, job: r.job, recipe: r.job?.recipe ?? null, relativePath: r.job?.relativePath ?? null,
+      })),
+      totalCost: result.totalCost,
+      knownCost: result.knownCost,
+      unknownCostRows: result.unknownCostRows,
+      anyError: result.anyError,
+      cap: session.cap,
+      spent: session.spent,
+      workTab: tab ? { tabId: tab.tabId, projectId: tab.projectId } : null,
+    };
+  },
+  importJobs: async ({ text, filename, template, presetId }) => {
+    const { result } = await planBatch({ text, filename, template, presetId });
+    if (result.anyError) {
+      const errors = result.rows.filter((r) => !r.ok).map((r) => `row ${r.index}: ${r.error}`).join('; ');
+      throw new Error(`Import refused, nothing was queued — ${errors}`);
+    }
+    const added = [];
+    for (const row of result.rows) added.push((await store.add(row.job)).id);
+    return { added, totalCost: result.totalCost, format: result.format };
+  },
+  listPresets: async () => listPresetsStored(),
+  // Presets are dashboard-only changes (like the cap): an agent may read them and use them to queue
+  // jobs, but only a person may save or delete one.
+  async savePreset({ preset }, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can save a preset');
+    const clean = normalizePreset(preset ?? {});
+    if (!clean.name) throw new Error('A preset needs a name');
+    const list = await listPresetsStored();
+    const id = preset?.id ?? crypto.randomUUID();
+    const record = { id, ...clean };
+    const i = list.findIndex((p) => p.id === id);
+    if (i >= 0) list[i] = record;
+    else list.push(record);
+    await local.set(PRESETS_KEY, list);
+    return record;
+  },
+  async deletePreset({ id }, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can delete a preset');
+    await local.set(PRESETS_KEY, (await listPresetsStored()).filter((p) => p.id !== id));
+    return { deleted: id };
+  },
   approve: async ({ id }) => store.apply(id, { type: 'approve' }),
   cancel: async ({ id }) => store.apply(id, { type: 'cancel' }),
   requeue: async ({ id }) => store.apply(id, { type: 'requeue' }),
@@ -324,7 +411,7 @@ const handlers = {
 
 // What agents may do through the helper: the same as a dashboard click, minus the cap, the halt,
 // the work tab and pairing (docs/SPEC.md decisions 7-9).
-const AGENT_COMMANDS = new Set(['status', 'addJob', 'approve', 'cancel', 'requeue', 'retryDownload']);
+const AGENT_COMMANDS = new Set(['status', 'addJob', 'previewImport', 'importJobs', 'listPresets', 'approve', 'cancel', 'requeue', 'retryDownload']);
 
 const bridge = createBridge({
   url: `ws://127.0.0.1:${HELPER_PORT}/bridge`,
@@ -341,7 +428,7 @@ const bridge = createBridge({
 const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
 
 // Reads must not tick: a tick writes storage, which makes the dashboard read status again (a loop).
-const READS = new Set(['status', 'selfCheck']);
+const READS = new Set(['status', 'selfCheck', 'previewImport', 'listPresets']);
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!fromExtensionPage(sender) || !handlers[msg?.cmd]) return false;

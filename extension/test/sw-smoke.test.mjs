@@ -201,3 +201,79 @@ test('a job may name an absolute output path for the helper to write; anything e
   assert.match((await send({ cmd: 'addJob', spec: { ...spec, outputPath: 'film/fox.mp4' } })).error, /absolute/);
   assert.match((await send({ cmd: 'addJob', spec: { ...spec, outputPath: '/Users/me/.zshrc' } })).error, /\.mp4/);
 });
+
+// ---- Storyboard / batch import (decision 3) and presets ---------------------------------------
+
+const REF = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
+const CSV = 'scene,prompt,kind,resolution,duration\nopening,a red fox,video,360p,4\nclosing,a blue fox,video,360p,4\n';
+
+test('a storyboard preview plans rows and the batch total, and queues nothing', async () => {
+  const before = (await send({ cmd: 'status' })).value.jobs.length;
+  const r = await send({ cmd: 'previewImport', text: CSV, filename: 'story.csv' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.format, 'csv');
+  assert.equal(r.value.rows.length, 2);
+  assert.ok(r.value.rows.every((row) => row.ok), JSON.stringify(r.value.rows));
+  assert.equal(r.value.totalCost, 8);
+  assert.equal(r.value.anyError, false);
+  assert.equal(r.value.cap, 10);
+  assert.equal((await send({ cmd: 'status' })).value.jobs.length, before); // preview queues nothing
+});
+
+test('a bad row is reported by index and a refused import queues nothing', async () => {
+  const before = (await send({ cmd: 'status' })).value.jobs.length;
+  const text = JSON.stringify([
+    { scene: 'good', prompt: 'a red fox', resolution: '360p', duration: 4 },
+    { scene: 'bad', prompt: 'x', count: 9 },
+  ]);
+  const preview = await send({ cmd: 'previewImport', text });
+  assert.equal(preview.value.anyError, true);
+  assert.equal(preview.value.rows[1].ok, false);
+  assert.match(preview.value.rows[1].error, /Count must be 1-4/);
+
+  const bad = await send({ cmd: 'importJobs', text });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /row 2/);
+  assert.match(bad.error, /Count must be 1-4/);
+  assert.equal((await send({ cmd: 'status' })).value.jobs.length, before);
+});
+
+test('a valid storyboard import queues every row through the real job model', async () => {
+  const r = await send({ cmd: 'importJobs', text: CSV, filename: 'story.csv', template: '{project}/{scene}-{index}' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.added.length, 2);
+  assert.equal(r.value.totalCost, 8);
+  const jobs = (await send({ cmd: 'status' })).value.jobs;
+  const imported = jobs.filter((j) => r.value.added.includes(j.id));
+  assert.deepEqual(imported.map((j) => j.state), ['queued', 'queued']);
+  assert.deepEqual(imported.map((j) => j.name), ['opening', 'closing']);
+  assert.ok(imported.every((j) => j.recipe === 'abra_t2v_4s_360p'));
+  assert.equal(imported[0].relativePath, `${PID}/opening-1`);
+});
+
+test('a preset saves, lists and deletes, and its defaults apply to an imported batch', async () => {
+  const saved = await send({ cmd: 'savePreset', preset: { name: 'client A', kind: 'video', resolution: '360p', durationS: 8, aspect: '16:9', count: 1, refs: [REF] } });
+  assert.equal(saved.ok, true, saved.error);
+  assert.ok(saved.value.id);
+  assert.equal(saved.value.refs[0], REF);
+
+  const listed = await send({ cmd: 'listPresets' });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.value.length, 1);
+
+  // The preset's resolution/duration/refs fill a row that only names a scene and prompt.
+  const preview = await send({ cmd: 'previewImport', text: 'scene,prompt\nsolo,x', presetId: saved.value.id });
+  assert.equal(preview.value.rows[0].ok, true, preview.value.rows[0].error);
+  assert.equal(preview.value.rows[0].spec.resolution, '360p');
+  assert.equal(preview.value.rows[0].spec.durationS, 8);
+  assert.deepEqual(preview.value.rows[0].spec.refs, [REF]);
+  assert.equal(preview.value.rows[0].job.recipe, 'abra_r2v_8s_360p');
+
+  assert.equal((await send({ cmd: 'deletePreset', id: saved.value.id })).ok, true);
+  assert.equal((await send({ cmd: 'listPresets' })).value.length, 0);
+});
+
+test('only the dashboard may save or delete presets', async () => {
+  assert.match((await send({ cmd: 'savePreset', preset: { name: 'x' } }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+  assert.match((await send({ cmd: 'deletePreset', id: 'nope' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});

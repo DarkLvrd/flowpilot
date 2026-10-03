@@ -6,6 +6,7 @@
 
 import { buildJob } from './jobspec.js';
 import { uniquify } from './naming.js';
+import { applyPresetToSpec } from './presets.js';
 
 export function detectFormat(text, filename = '') {
   const ext = /\.([a-z0-9]+)$/i.exec(String(filename))?.[1]?.toLowerCase();
@@ -153,7 +154,7 @@ const normKey = (k) => String(k).toLowerCase().replace(/[\s_-]+/g, '');
 // by index and the caller can refuse the whole import. Cost is summed; `totalCost` is null when any
 // row's cost is unknown (the page's own cost line then decides before the click). Duplicate scene
 // names get -2, -3… so one batch never overwrites itself.
-export function planImport({ text, filename = '', projectId, recipes = null, template = null, taken = [] }) {
+export function planImport({ text, filename = '', projectId, recipes = null, template = null, preset = null, taken = [] }) {
   const { format, rows: raw } = parseStoryboard(text, { filename });
   const usedNames = new Set(taken);
   const usedPaths = new Set();
@@ -162,7 +163,9 @@ export function planImport({ text, filename = '', projectId, recipes = null, tem
 
   const rows = raw.map((r, i) => {
     const index = i + 1;
-    const spec = normalizeRow(r);
+    const normalized = normalizeRow(r);
+    // A selected preset fills only what the row left out (row wins).
+    const spec = preset ? applyPresetToSpec(preset, normalized) : normalized;
     // A deterministic label (never a timestamp): scene, then name, then its position.
     const baseName = spec.name ?? spec.scene ?? `scene-${index}`;
     spec.name = uniquify(baseName, usedNames);

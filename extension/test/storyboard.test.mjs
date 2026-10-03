@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
 import { parseCatalog } from '../lib/catalog.js';
 import { detectFormat, parseStoryboard, parseCsv, parseRows, planImport } from '../lib/storyboard.js';
+import { defaultPreset, normalizePreset } from '../lib/presets.js';
 import { fixture } from './helpers.mjs';
 
 const recipes = parseCatalog(parseBatchResponse(fixture('HTrJv'), 'HTrJv').data);
@@ -161,4 +162,14 @@ test('a pasted CSV list with no filename is detected and planned', () => {
   assert.equal(p.format, 'csv');
   assert.equal(p.rows.length, 2);
   assert.ok(p.rows.every((r) => r.ok));
+});
+
+test('a preset supplies defaults for rows that leave them out, and the row still wins', () => {
+  const preset = normalizePreset(defaultPreset({ resolution: '360p', durationS: 8, refs: [REF] }));
+  const p = plan(JSON.stringify([
+    { scene: 'solo', prompt: 'x' },
+    { scene: 'keeps', prompt: 'y', resolution: '720p', duration: 4 },
+  ]), { preset });
+  assert.equal(p.rows[0].job.recipe, 'abra_r2v_8s_360p');
+  assert.equal(p.rows[1].job.recipe, 'abra_r2v_4s');
 });
