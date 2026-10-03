@@ -47,10 +47,39 @@ async function saveText(filename, text, mime = 'text/markdown') {
   await chrome.downloads.download({ url: `data:${mime};charset=utf-8,${encodeURIComponent(text)}`, filename, saveAs: true });
 }
 
+// After a halt: why it stopped (in Flow Pilot's own words), how long to wait, what to check, and
+// one press to resume only the rows that never reached Flow. Everything shown here comes from the
+// service worker's resume plan, so the dashboard never has to guess which rows are eligible.
+function renderCoolDown(s) {
+  const holding = !!(s.session.halted || s.session.awaitingResume);
+  $('cooldown').hidden = !holding;
+  if (!holding) return;
+  const cool = s.coolDown;
+  $('coolTitle').textContent = s.session.halted ? '⛔ All jobs stopped.' : '⏸ Cool-down — nothing is being submitted.';
+  $('haltReason').textContent = s.session.halted
+    ? `Flow Pilot's exact words: “${s.session.haltReason}”`
+    : (s.session.lastHalt ? `Last halt: “${s.session.lastHalt.reason}” at ${new Date(s.session.lastHalt.at).toLocaleTimeString()}` : '');
+  $('coolWhy').textContent = cool?.why ?? '';
+  $('coolWait').textContent = cool
+    ? (cool.remainingMinutes > 0
+      ? `Wait about ${cool.remainingMinutes} more min (about ${cool.waitMinutes} in total; ${cool.minMinutes} is the shortest the field data saw work). ${cool.note}`
+      : `The wait you were shown is over. ${cool.note}`)
+    : '';
+  $('coolChecks').replaceChildren(...(cool?.checklist ?? []).map((t) => { const li = document.createElement('li'); li.textContent = t; return li; }));
+  const ready = s.resume?.ready ?? [];
+  $('resumeInfo').textContent = [
+    `${ready.length} ${ready.length === 1 ? 'row was' : 'rows were'} never submitted and can still run, in their original order.`,
+    'Rows that already reached Flow keep their result and are never submitted again.',
+    ...(s.resume?.blockers ?? []), ...(s.resume?.warnings ?? []),
+  ].join(' ');
+  $('resume').disabled = !s.resume?.ok;
+  $('resume').textContent = `Resume ${ready.length} ${ready.length === 1 ? 'row' : 'rows'} that were never submitted`;
+  $('clearHalt').hidden = !s.session.halted;
+}
+
 async function render() {
   const s = await send('status');
-  $('halt').hidden = !s.session.halted;
-  $('haltReason').textContent = `⛔ All jobs halted: ${s.session.haltReason}`;
+  renderCoolDown(s);
   $('summary').textContent = `${s.workTab ? `Work tab: project ${s.workTab.projectId}` : 'No work tab: open a Flow project and click "Use this tab" in the popup.'}`
     + ` · Credits this session: ${s.session.spent} / ${s.session.cap ?? 'no cap'}`
     + (s.selfCheck?.balance != null ? ` · Balance: ${s.selfCheck.balance}` : '')
@@ -247,6 +276,7 @@ $('clearHalt').onclick = act(() => send('clearHalt'));
 // the front tab). The extension never does this on its own.
 $('focusTab').onclick = act(() => send('focusWorkTab'));
 $('prompts').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('promptset/index.html') });
+$('resume').onclick = act(() => send('resumeUnsubmitted'));
 $('saveReceipt').onclick = act(async () => {
   const doc = await send('receipt', { includePrompts: $('includePrompts').checked });
   await saveText(doc.filename, doc.text);

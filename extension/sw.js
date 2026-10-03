@@ -16,6 +16,7 @@ import { planImport } from './lib/storyboard.js';
 import { normalizePreset } from './lib/presets.js';
 import * as folder from './lib/folder.js';
 import { buildReceipt } from './lib/receipt.js';
+import { resumePlan, resumeGate, coolDown } from './lib/resume.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -377,7 +378,9 @@ const fromDashboard = (sender) => !!sender?.url?.startsWith(chrome.runtime.getUR
 
 const handlers = {
   async status() {
+    const session = await store.session();
     const jobs = await store.list();
+    const selfCheck = await local.get('flowpilot.selfCheck', null);
     const boundTab = await workTab.get();
     const approved = jobs.filter((j) => j.state === 'approved');
     const approvedHere = boundTab ? approved.filter((j) => j.projectId === boundTab.projectId) : [];
@@ -386,16 +389,27 @@ const handlers = {
     const waitingFor = !boundTab
       ? (approved.length ? { reason: 'no-work-tab', count: approved.length } : null)
       : (approvedHere.length ? { reason: 'front-tab', count: approvedHere.length } : null);
+    const now = Date.now();
+    // What a Resume would do, and whether it may go ahead — computed here so the dashboard never
+    // has to guess, and pure so reading status still writes nothing (see the smoke test).
+    const plan = resumePlan(jobs);
+    const advice = coolDown({
+      haltReason: session.halted ? session.haltReason : session.lastHalt?.reason ?? session.haltReason,
+      haltedAt: session.haltedAt ?? session.lastHalt?.at ?? null,
+      now,
+    });
     return {
-      session: await store.session(),
+      session,
       jobs,
       workTab: boundTab,
-      selfCheck: await local.get('flowpilot.selfCheck', null),
+      selfCheck,
       lastTick: await local.get('flowpilot.lastTick', null),
       receipt: await local.get('flowpilot.lastReceipt', null),
       helper: { connected: bridge.connected },
       counts: { awaitingPreview: awaitingPreviewCount(jobs), approved: approved.length },
       waitingFor,
+      coolDown: advice,
+      resume: resumeGate({ session, selfCheck, workTab: boundTab, plan, now, coolDown: advice }),
     };
   },
   async useTab({ tabId }) {
@@ -493,6 +507,23 @@ const handlers = {
     await local.set('flowpilot.lastReceipt', { at: doc.summary.at, filename: doc.filename, summary: doc.summary });
     return doc;
   },
+  // The Resume press (report §9.2): dashboard-only, one deliberate press per resume. It refuses
+  // while the halt is still set or the self-check is still failing, decides nothing on a timer, and
+  // releases only the rows that never reached Flow — each still goes through the pre-spend checks
+  // and the cap like a fresh job. It never clicks anything itself; the engine does that, and only
+  // after the hold is gone.
+  async resumeUnsubmitted(_msg, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can resume the queue');
+    const session = await store.session();
+    const plan = resumePlan(await store.list());
+    const gate = resumeGate({
+      session, plan, selfCheck: await local.get('flowpilot.selfCheck', null),
+      workTab: await workTab.get(), now: Date.now(),
+    });
+    if (!gate.ok) throw new Error(gate.blockers.join(' '));
+    await store.resume();
+    return { resumed: gate.ready.length, waiting: gate.waiting, warnings: gate.warnings, skipped: plan.skipped.length };
+  },
   // The one-time code a person gives an agent (docs/SPEC.md decision 9); the helper issues it.
   async pairCode(_msg, sender) {
     if (!fromDashboard(sender)) throw new Error('Only the dashboard can pair an agent');
@@ -546,7 +577,12 @@ bridge.start();
 
 // A job approved in the dashboard waits for the person to bring Flow to the front: go as soon as they do.
 // Only then: every tick asks Flow for status, which stays on the alarm's pace (LESSONS #16).
+// A halt, or the cool-down hold that follows one, can never submit anything, so it never ticks
+// here: otherwise the hold's "waiting" line would re-tick on every focus change for as long as the
+// person takes to resume.
 async function tickIfWaiting() {
+  const session = await store.session();
+  if (session.halted || session.awaitingResume) return;
   if ((await local.get('flowpilot.lastTick', null))?.waiting) tick();
 }
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {

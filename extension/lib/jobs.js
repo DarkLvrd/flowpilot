@@ -14,6 +14,11 @@
 // The write-ahead click is what makes the machine safe to resume: a job that reached `submitted`
 // is never clicked again, even if the click itself never happened. It can only be matched to a
 // result or failed. A failed job may be re-queued only if it never clicked.
+//
+// A halt adds one more hold on top of that: clearing a halt puts the interrupted jobs back to where
+// they were, but `session.awaitingResume` keeps any row that never clicked from being submitted
+// until a person presses Resume (report §9.2). The engine reads that flag; only `resume()` clears
+// it, and only the dashboard calls that.
 
 const KEY = 'flowpilot';
 const TERMINAL = new Set(['done', 'failed', 'cancelled']);
@@ -107,7 +112,7 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
 
   async function load() {
     const stored = (await area.get(KEY))[KEY];
-    return stored ?? { jobs: [], session: { cap: null, spent: 0, halted: false, haltReason: null } };
+    return stored ?? { jobs: [], session: { cap: null, spent: 0, halted: false, haltReason: null, haltedAt: null, lastHalt: null, awaitingResume: false } };
   }
 
   const find = (state, id) => {
@@ -172,6 +177,10 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
       return update((state) => {
         state.session.halted = true;
         state.session.haltReason = reason;
+        state.session.haltedAt = now();
+        state.session.lastHalt = { reason, at: state.session.haltedAt };
+        // A halt supersedes any earlier hold: the rows about to be interrupted decide the next one.
+        state.session.awaitingResume = false;
         const t = now();
         state.jobs = state.jobs.map((j) => (TERMINAL.has(j.state) || j.state === 'halted' ? j : {
           ...j, state: 'halted', haltedFrom: j.state, updatedAt: t,
@@ -192,6 +201,18 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
           const back = j.haltedFrom === 'submitting' ? 'approved' : j.haltedFrom;
           return { ...j, state: back, haltedFrom: undefined, updatedAt: t, history: [...j.history, { state: back, at: t }] };
         });
+        // Any row that never reached Flow waits for a deliberate Resume instead of running off the
+        // next alarm tick. Rows already on Flow's side carry on to their result as before.
+        state.session.awaitingResume = state.jobs.some((j) => j.clickedAt == null && !j.mayHaveSubmitted && ['queued', 'approved'].includes(j.state));
+        return state.session;
+      });
+    },
+
+    // The dashboard's Resume press: release the hold. It never submits anything itself and never
+    // re-submits a row that already clicked — the engine's ordinary checks do the rest.
+    resume() {
+      return update((state) => {
+        state.session.awaitingResume = false;
         return state.session;
       });
     },

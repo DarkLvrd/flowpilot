@@ -89,8 +89,13 @@ is overlaid on Flow's own page.
   landed. Prompt text stays out unless you tick **include prompt text** (a short prompt fingerprint
   is always there). It is built from Flow Pilot's own records and is never uploaded — keep it, send
   it, or delete it.
-- **Halts** — any `UNUSUAL_ACTIVITY` (or similar block) stops the whole queue and shows a banner
-  with a **Clear halt** button; there is no automatic retry.
+- **Halts and cool-down** — any `UNUSUAL_ACTIVITY` (or similar block) stops the whole queue and
+  shows a panel with the exact wording Flow Pilot got, what to check in Flow, how long to wait
+  (about an hour; 30 minutes is the shortest wait the published field data ever saw work), and a
+  **Resume** button. **Resume runs only the rows that were never submitted**, in their original
+  order, under the same cap, each behind a fresh pre-spend check; a row that already reached Flow is
+  never submitted again and keeps its result. Nothing is submitted after a halt until you press
+  Resume yourself — time passing does nothing, and there is no automatic retry anywhere.
 
 Storyboard import (JSON/CSV bulk queueing) and the folder picker are built (SPEC decisions 3 and
 5): the dashboard now adds jobs one at a time *or* a whole batch at once.

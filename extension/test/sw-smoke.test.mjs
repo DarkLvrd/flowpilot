@@ -140,6 +140,9 @@ test('a block while adding a job halts the queue instead of queueing blind', asy
   const s = (await send({ cmd: 'status' })).value.session;
   assert.equal(s.halted, true);
   assert.equal((await send({ cmd: 'clearHalt' })).ok, true);
+  // Clearing a halt holds the rows that never clicked until a person presses Resume; these tests
+  // only care about the rest of the wiring, so release the hold the way a person would.
+  assert.equal((await send({ cmd: 'resumeUnsubmitted' })).ok, true);
 });
 
 // Focus and tab switches tick only to start a job that waits for Flow in front (LESSONS #16:
@@ -390,4 +393,31 @@ test('the dashboard exports a receipt from the records; the popup cannot', async
   const withPrompts = await send({ cmd: 'receipt', includePrompts: true });
   assert.ok(withPrompts.value.text.includes('a red fox'));
   assert.match((await send({ cmd: 'receipt' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});
+
+// ---- Cool-down and resume (§9.2: manual, never a timer) ---------------------------------------
+
+test('resume is a dashboard-only press: it refuses while the halt is set, then runs only never-submitted rows', async () => {
+  const spec = { name: 'resume-me', prompt: 'x', kind: 'video', input: 'text', resolution: '360p', durationS: 4 };
+  const job = (await send({ cmd: 'addJob', spec })).value;
+  await send({ cmd: 'approve', id: job.id });
+  assert.match((await send({ cmd: 'resumeUnsubmitted' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+
+  rateLimited = true; // the next job add is refused as a block, which halts the queue
+  await send({ cmd: 'addJob', spec: { ...spec, name: 'blocked' } });
+  rateLimited = false;
+  const refused = await send({ cmd: 'resumeUnsubmitted' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /halt is still set/);
+
+  assert.equal((await send({ cmd: 'clearHalt' })).ok, true);
+  const s = (await send({ cmd: 'status' })).value;
+  assert.equal(s.session.awaitingResume, true, 'the never-submitted row waits for the press');
+  assert.ok(s.resume.ready.some((j) => j.id === job.id));
+
+  const r = await send({ cmd: 'resumeUnsubmitted' });
+  assert.equal(r.ok, true, r.error);
+  assert.ok(r.value.resumed >= 1);
+  assert.equal(typeof r.value.skipped, 'number');
+  assert.equal((await send({ cmd: 'status' })).value.session.awaitingResume, false);
 });

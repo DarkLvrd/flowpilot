@@ -179,12 +179,19 @@ export function createRunner({ store, flow, driver, files, workTab, refs, settin
     // Returns { error } when a pass stopped early, { waiting } when a job waits for the person;
     // the store holds everything else.
     async tick() {
-      if ((await store.session()).halted) return {};
+      const session = await store.session();
+      if (session.halted) return {};
       const tab = await workTab.get();
       if (!tab) return {};
       try {
         await track(tab, await store.list());
         await download(await store.list());
+        // After a halt that a person cleared, nothing is submitted again until they press Resume:
+        // this is the hold that makes "no automatic retry after a block" true for the whole queue,
+        // not just for the row that hit the block (report §9.2). Time passing changes nothing.
+        if (session.awaitingResume) {
+          return { waiting: 'Cool-down: press “Resume rows that were never submitted” in the dashboard when you are ready' };
+        }
         return (await submitNext(tab, await store.list())) ?? {};
       } catch (e) {
         if (e instanceof Blocked) {

@@ -79,10 +79,11 @@ const spec = (name, extra = {}) => ({
 });
 
 async function setup(worldOpts, { cap = 100, maxInFlight = 2, now = NOW } = {}) {
-  const store = createJobStore(memoryArea(), { now: () => now });
+  const clock = typeof now === 'function' ? now : () => now;
+  const store = createJobStore(memoryArea(), { now: clock });
   await store.setCap(cap);
   const world = fakeWorld(worldOpts);
-  const runner = createRunner({ store, ...world, settings: { maxInFlight }, now: () => now });
+  const runner = createRunner({ store, ...world, settings: { maxInFlight }, now: clock });
   return { store, world, runner };
 }
 
@@ -488,4 +489,42 @@ test('a promoted preview-first video submits with the approved still as its firs
   assert.equal(after.references.firstFrame, REF_A);
   assert.equal(after.cost, 4);
   assert.equal((await store.session()).spent, 4); // spent only now, after the still was approved
+});
+
+// ---- Cool-down hold (report §9.2) -------------------------------------------------------------
+
+test('time alone never restarts a halted batch: the never-submitted rows wait for the Resume press', async () => {
+  let clock = NOW;
+  const { store, world, runner } = await setup({}, { now: () => clock });
+  const a = await approved(store, 'a');
+  await store.halt('UNUSUAL_ACTIVITY from Flow: the request was refused');
+  await store.clearHalt();
+  clock += 6 * 60 * 60_000; // hours after the halt: exactly the situation a timer would "fix"
+  world.log.length = 0;
+
+  const held = await runner.tick();
+  assert.ok(!world.log.includes('click'), 'nothing may be submitted without a person pressing Resume');
+  assert.match(held.waiting, /Resume/);
+  assert.equal((await store.get(a.id)).state, 'approved');
+
+  await store.resume(); // the dashboard press
+  await runner.tick();
+  assert.ok(world.log.includes('click'));
+  assert.equal((await store.get(a.id)).state, 'submitted');
+});
+
+test('a resumed row still goes through the pre-spend check, and the cap still stops it', async () => {
+  const { store, world, runner } = await setup({}, { cap: 4 });
+  const a = await approved(store, 'a');
+  const b = await approved(store, 'b');
+  await runner.tick(); // a spends the whole cap
+  await store.halt('UNUSUAL_ACTIVITY');
+  await store.clearHalt();
+  await store.resume();
+  world.log.length = 0;
+
+  await runner.tick();
+  assert.ok(!world.log.includes('click'));
+  assert.match((await store.get(b.id)).error, /cap/);
+  assert.equal((await store.session()).spent, 4);
 });
