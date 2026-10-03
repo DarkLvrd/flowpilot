@@ -121,6 +121,28 @@ test('inspect says whether the config points at this install', () => {
   assert.equal(ok.reason, 'ok');
 });
 
+// A working setup can name Node in any of the forms that start the same program: the absolute path
+// install-claude writes, a different Node install, or the bare name on PATH. Only a command that
+// cannot start Node, or args pointing at another script, is broken.
+test('inspect accepts a working config whatever form its Node command takes, and still fails a broken one', () => {
+  const file = join(tmp(), 'claude_desktop_config.json');
+  const args = entry().args;
+  const withCommand = (command, a = args) => {
+    writeFileSync(file, JSON.stringify({ mcpServers: { [SERVER_NAME]: { command, args: a } } }));
+    return inspectConfig({ file, entry: entry() });
+  };
+  const absolute = withCommand('/opt/node/bin/node');
+  assert.equal(absolute.ok, true, absolute.reason);
+  const bare = withCommand('node');
+  assert.equal(bare.ok, true, bare.reason);
+  const otherInstall = withCommand('/usr/local/bin/node');
+  assert.equal(otherInstall.ok, true, otherInstall.reason);
+  // Anything that is not Node is still a broken config, and so is the right command with the wrong script.
+  assert.equal(withCommand('/usr/bin/python3').ok, false);
+  assert.equal(withCommand(undefined).ok, false);
+  assert.equal(withCommand('node', ['/somewhere/else.js', 'mcp']).ok, false);
+});
+
 test('install-claude writes the config, says exactly what changed, and explains the one manual step', async () => {
   const file = join(tmp(), 'claude_desktop_config.json');
   const env = { FLOWPILOT_HOME: '/tmp/fp-home' }; // what a custom home/port would be copied into the entry

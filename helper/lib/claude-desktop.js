@@ -61,13 +61,23 @@ export function mergeServerEntry(config, entry, name = SERVER_NAME) {
 }
 
 // Read-only look at an existing config: does `mcpServers.flowpilot` point at this install?
+//
+// The command is compared by what it starts, not byte-for-byte: a working config may name the Node
+// install-claude writes, a different Node install, or the bare `node` on PATH. Requiring the
+// absolute path made a perfectly working setup a permanent ❌ (and its hint suggested rewriting it).
+// The script in `args` is still compared exactly — that is the part that identifies *this* install.
+const NODE_COMMANDS = new Set(['node', 'node.exe', 'nodejs', 'nodejs.exe']);
+const basenameOf = (command) => String(command ?? '').split(/[\\/]/).pop().toLowerCase();
+const startsNode = (command) => NODE_COMMANDS.has(basenameOf(command));
+
 export function inspectConfig({ file, entry, name = SERVER_NAME } = {}) {
   if (!existsSync(file)) return { file, present: false, ok: false, reason: 'missing' };
   let config;
   try { config = JSON.parse(readFileSync(file, 'utf8')); } catch { return { file, present: true, ok: false, reason: 'unreadable' }; }
   const current = config?.mcpServers?.[name] ?? null;
   if (!current) return { file, present: true, ok: false, reason: 'no-server', current: null };
-  const same = current.command === entry?.command && JSON.stringify(current.args) === JSON.stringify(entry?.args);
+  const commandOk = current.command === entry?.command || (startsNode(current.command) && startsNode(entry?.command));
+  const same = commandOk && JSON.stringify(current.args) === JSON.stringify(entry?.args);
   return { file, present: true, ok: same, reason: same ? 'ok' : 'different', current };
 }
 
