@@ -421,3 +421,27 @@ test('resume is a dashboard-only press: it refuses while the halt is set, then r
   assert.equal(typeof r.value.skipped, 'number');
   assert.equal((await send({ cmd: 'status' })).value.session.awaitingResume, false);
 });
+
+// ---- Compatibility note and diagnostics (§9.3) -------------------------------------------------
+
+test('the dashboard saves a local diagnostic bundle: dated, honest, and free of cookies, tokens and prompts', async () => {
+  const before = (await send({ cmd: 'status' })).value;
+  assert.match(before.compat.note, /last proven against the Flow build of/);
+  assert.match(before.compat.report, /Known issues|Not verified/);
+
+  const r = await send({ cmd: 'diagnostics' });
+  assert.equal(r.ok, true, r.error);
+  assert.match(r.value.filename, /^flowpilot-diagnostics-\d{4}-\d{2}-\d{2}-\d{4}\.txt$/);
+  assert.match(r.value.text, /Flow Pilot: 0\.1\.0/);
+  assert.match(r.value.text, /no cookies/i);
+  // The exact wording of the last halt travels with the bundle.
+  assert.ok(r.value.text.includes(before.session.lastHalt.reason));
+  // Prompt text is user content and paths can name a person: neither is in a bundle.
+  assert.ok(!r.value.text.includes('a red fox'), 'prompt text must not be in the bundle');
+  assert.ok(!r.value.text.includes('/Users/me/'), 'file paths must not be in the bundle');
+  // Nothing credential-shaped, and not even the words of a header value.
+  assert.ok(!/\bya29\./.test(r.value.text));
+  assert.ok(!/Authorization\s*[:=]\s*\S/.test(r.value.text));
+  assert.ok(!/Bearer\s+\S/.test(r.value.text));
+  assert.match((await send({ cmd: 'diagnostics' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});

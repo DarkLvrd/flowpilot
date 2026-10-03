@@ -87,6 +87,12 @@ async function render() {
   if (s.session.cap !== shownCap) { shownCap = s.session.cap; $('cap').value = s.session.cap ?? ''; }
   renderChecks($('checks'), s.selfCheck);
   $('healthHint').textContent = FLOW_CHANGED_HINT;
+  // The dated compatibility note, and the local bundle a person can send to whoever helps them.
+  $('compat').textContent = s.compat?.note ?? '';
+  $('compatReport').textContent = s.compat?.report ?? '';
+  $('diagInfo').textContent = s.diagnostics
+    ? `Last diagnostics saved ${new Date(s.diagnostics.at).toLocaleString()}. Same file, nothing uploaded.`
+    : 'One local text file: version, Flow build, the self-check, halt reasons and recent job states. No cookies, no tokens, no prompts, no paths.';
   $('helper').textContent = s.helper?.connected
     ? '✅ Helper running: agents can use Flow Pilot.'
     : '⚪ Helper not running (only needed for agents): start it with `npx flowpilot serve`.';
@@ -277,6 +283,10 @@ $('clearHalt').onclick = act(() => send('clearHalt'));
 $('focusTab').onclick = act(() => send('focusWorkTab'));
 $('prompts').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('promptset/index.html') });
 $('resume').onclick = act(() => send('resumeUnsubmitted'));
+$('saveDiagnostics').onclick = act(async () => {
+  const doc = await send('diagnostics');
+  await saveText(doc.filename, doc.text, 'text/plain');
+});
 $('saveReceipt').onclick = act(async () => {
   const doc = await send('receipt', { includePrompts: $('includePrompts').checked });
   await saveText(doc.filename, doc.text);

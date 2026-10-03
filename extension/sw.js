@@ -17,6 +17,8 @@ import { normalizePreset } from './lib/presets.js';
 import * as folder from './lib/folder.js';
 import { buildReceipt } from './lib/receipt.js';
 import { resumePlan, resumeGate, coolDown } from './lib/resume.js';
+import { buildDiagnostics } from './lib/diagnostics.js';
+import { FLOW_COMPAT, compatNote, compatReport } from './lib/compat.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -410,6 +412,9 @@ const handlers = {
       waitingFor,
       coolDown: advice,
       resume: resumeGate({ session, selfCheck, workTab: boundTab, plan, now, coolDown: advice }),
+      // The dated "Flow compatibility" note, shown in the dashboard and carried in every bundle.
+      compat: { ...FLOW_COMPAT, note: compatNote(FLOW_COMPAT), report: compatReport(FLOW_COMPAT) },
+      diagnostics: await local.get('flowpilot.lastDiagnostics', null),
     };
   },
   async useTab({ tabId }) {
@@ -523,6 +528,19 @@ const handlers = {
     if (!gate.ok) throw new Error(gate.blockers.join(' '));
     await store.resume();
     return { resumed: gate.ready.length, waiting: gate.waiting, warnings: gate.warnings, skipped: plan.skipped.length };
+  },
+  // One local file a person can read or send (report §9.3): version, the dated compatibility note,
+  // the self-check with its failing steps, halt reasons, and recent job states. Built from an
+  // allow-list and scrubbed, so no cookie, auth header, token, prompt or path can ride along.
+  async diagnostics(_msg, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can save a diagnostic bundle');
+    const doc = buildDiagnostics({
+      version: VERSION,
+      jobs: await store.list(), session: await store.session(), selfCheck: await local.get('flowpilot.selfCheck', null),
+      lastTick: await local.get('flowpilot.lastTick', null), workTab: await workTab.get(), now: Date.now(),
+    });
+    await local.set('flowpilot.lastDiagnostics', { at: doc.fields.at, filename: doc.filename, fields: doc.fields });
+    return doc;
   },
   // The one-time code a person gives an agent (docs/SPEC.md decision 9); the helper issues it.
   async pairCode(_msg, sender) {

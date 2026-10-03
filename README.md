@@ -82,6 +82,13 @@ is overlaid on Flow's own page.
   `extension/lib/rpc.js`.
 - **Credit cap** — cost is shown per job before it runs, and the session cap is a hard ceiling.
   **Only the dashboard can set or raise the cap** — agents cannot.
+- **Flow compatibility and diagnostics** — the dashboard shows a dated line saying which Flow build
+  Flow Pilot was last *proven* against, with one click to read what has been proven, what Flow has
+  changed since, what is known broken, and what has never been tested. **Save diagnostics file**
+  writes one local text file for support: the version, the Flow build, the self-check with its
+  failing steps, the last halt in Flow's own words, and recent job states. It contains no cookies,
+  no tokens, no `Authorization` headers, no prompt text and no file paths, and Flow Pilot never
+  uploads it. The note is updated in the weekly loop, so its date is real.
 - **Spend-and-safety receipt** — press **Save receipt file** and Flow Pilot writes one local Markdown
   file for the batch or session: every row and its exact charge (a charge is only ever a Generate
   click it recorded, never a quote), the cap that was in force, everything that was never submitted
@@ -298,6 +305,8 @@ These are non-negotiable — see [`docs/SPEC.md`](docs/SPEC.md):
   0 credits, and a held video cannot be submitted until a person approves its still from the
   dashboard.
 - A downloaded file is accepted only after its bytes match its type.
+- The dashboard says which Flow build Flow Pilot was last proven against and dates that claim;
+  support files it writes are allow-listed and scrubbed, so a cookie, token or prompt cannot ride along.
 - Every credit figure it shows comes from its own records: a spend is claimed only for a Generate
   click it recorded, and the receipt says so in plain words, including what it could not prove.
 
