@@ -8,6 +8,7 @@ import { createKeyring } from '../lib/keys.js';
 import { createPin } from '../lib/pin.js';
 import { createHelper } from '../lib/server.js';
 import { main } from '../lib/cli.js';
+import { buildServerEntry } from '../lib/claude-desktop.js';
 
 const EXT = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
@@ -33,14 +34,15 @@ async function world({ extension = true } = {}) {
     });
     await new Promise((r) => ws.once('open', r));
   }
-  const env = { FLOWPILOT_HOME: home, FLOWPILOT_PORT: String(port) };
-  const run = async (...argv) => {
+  const env = { FLOWPILOT_HOME: home, FLOWPILOT_PORT: String(port), FLOWPILOT_CLAUDE_CONFIG: join(home, 'claude_desktop_config.json') };
+  const runWith = async (opts, ...argv) => {
     const out = [];
-    const code = await main(argv, { env, out: (s) => out.push(s), err: (s) => out.push(s) });
+    const code = await main(argv, { env, out: (s) => out.push(s), err: (s) => out.push(s), ...opts });
     return { code, text: out.join('\n') };
   };
+  const run = (...argv) => runWith({}, ...argv);
   const close = async () => { ws?.close(); await helper.close(); };
-  return { home, keyring, run, calls, close };
+  return { home, env, keyring, run, runWith, calls, close };
 }
 
 test('pair stores the key for the owner only; later commands use it', async () => {
@@ -97,16 +99,43 @@ test('errors are short and the exit code is non-zero', async () => {
 
 test('doctor reports each part of the setup', async () => {
   const w = await world();
-  let r = await w.run('doctor');
+  const tools = ['flowpilot_status', 'flowpilot_job', 'flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_requeue', 'flowpilot_retry_download'];
+  const probeMcp = async () => ({ tools });
+  writeFileSync(w.env.FLOWPILOT_CLAUDE_CONFIG, JSON.stringify({ mcpServers: { flowpilot: buildServerEntry({ env: w.env }) } }));
+  let r = await w.runWith({ probeMcp }, 'doctor');
   assert.equal(r.code, 1);
   assert.match(r.text, /✅ .*Helper running/);
   assert.match(r.text, /✅ .*Extension connected/);
+  assert.match(r.text, /✅ .*MCP server command works/);
+  assert.match(r.text, /✅ .*MCP tools/);
+  assert.match(r.text, /✅ .*Claude Desktop config/);
   assert.match(r.text, /❌ .*Paired/);
   await w.run('pair', w.keyring.newCode().code);
-  r = await w.run('doctor');
+  r = await w.runWith({ probeMcp }, 'doctor');
   assert.equal(r.code, 0, r.text);
   assert.match(r.text, /✅ .*Work tab/);
   assert.match(r.text, new RegExp(`Extension pinned.*${EXT_ID}`)); // reports the pinned id
+  await w.close();
+});
+
+test('doctor flags an MCP server that will not answer, a wrong tool list, and a missing or stale Claude config', async () => {
+  const w = await world();
+  await w.run('pair', w.keyring.newCode().code);
+
+  let r = await w.runWith({ probeMcp: async () => { throw new Error('the MCP server did not answer within 8 s'); } }, 'doctor');
+  assert.equal(r.code, 1);
+  assert.match(r.text, /❌ .*MCP server command works.*did not answer/s);
+  assert.match(r.text, /❌ .*MCP tools/);
+
+  r = await w.runWith({ probeMcp: async () => ({ tools: ['flowpilot_status', 'flowpilot_delete_everything'] }) }, 'doctor');
+  assert.equal(r.code, 1);
+  assert.match(r.text, /✅ .*MCP server command works/);
+  assert.match(r.text, /❌ .*MCP tools.*flowpilot_delete_everything/s);
+
+  assert.match(r.text, /❌ .*Claude Desktop config.*install-claude/s); // no config file yet
+  writeFileSync(w.env.FLOWPILOT_CLAUDE_CONFIG, JSON.stringify({ mcpServers: { flowpilot: { command: '/somewhere/else/node', args: ['/old/flowpilot.js', 'mcp'] } } }));
+  r = await w.runWith({ probeMcp: async () => ({ tools: [] }) }, 'doctor');
+  assert.match(r.text, /❌ .*Claude Desktop config.*install-claude/s);
   await w.close();
 });
 

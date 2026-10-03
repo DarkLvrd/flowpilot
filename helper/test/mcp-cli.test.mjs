@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
 import WebSocket from 'ws';
 import { createKeyring } from '../lib/keys.js';
@@ -107,3 +108,15 @@ function saveKeyFor(home, keyring) {
   const key = keyring.redeem(keyring.newCode().code, 'claude');
   writeFileSync(join(home, 'key'), `${key}\n`, { mode: 0o600 });
 }
+
+test('probeMcpServer() runs the real command and reads exactly the seven published tools', async () => {
+  const { probeMcpServer, TOOL_NAMES } = await import('../lib/mcp.js');
+  const bin = fileURLToPath(new URL('../bin/flowpilot.js', import.meta.url));
+  const home = mkdtempSync(join(tmpdir(), 'fp-probe-'));
+  const port = await freePort();
+  const { tools } = await probeMcpServer({ args: [bin, 'mcp'], env: { ...process.env, FLOWPILOT_HOME: home, FLOWPILOT_PORT: String(port) } });
+  assert.equal(tools.length, 7);
+  assert.deepEqual([...tools].sort(), [...TOOL_NAMES].sort());
+  assert.deepEqual(tools.sort(), ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']);
+  assert.equal(await isHelperListening(port), false); // listing tools never starts a helper
+});

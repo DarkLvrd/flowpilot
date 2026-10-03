@@ -3,6 +3,7 @@
 // halt and the work tab stay in the dashboard (docs/SPEC.md decisions 7-9).
 
 import { createInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
 
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const id = { type: 'object', properties: { id: { type: 'string', description: 'Job id' } }, required: ['id'], additionalProperties: false };
@@ -53,6 +54,47 @@ const TOOLS = [
 function need(args, key) {
   if (typeof args?.[key] !== 'string' || !args[key]) throw new Error(`"${key}" is required`);
   return args[key];
+}
+
+export const TOOL_NAMES = TOOLS.map((t) => t.name);
+
+// Run the real command over stdio and read its `tools/list` — the same handshake Claude Desktop does.
+// `initialize` and `tools/list` never touch the helper, so this has no side effects.
+export function probeMcpServer({ command = process.execPath, args = [], env = process.env, timeoutMs = 8000, spawnImpl = spawn } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(command, args, { env, stdio: ['pipe', 'pipe', 'ignore'] });
+    let buf = '';
+    let settled = false;
+    let timer = null;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      fn(value);
+    };
+    timer = setTimeout(() => finish(reject, new Error(`The MCP server did not answer within ${Math.round(timeoutMs / 1000)} s`)), timeoutMs);
+    child.on('error', (e) => finish(reject, e));
+    child.on('close', () => finish(reject, new Error('The MCP server exited before it listed its tools')));
+    child.stdout.on('data', (c) => {
+      buf += c;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        let m;
+        try { m = JSON.parse(line); } catch { continue; }
+        if (m.id !== 2) continue;
+        if (m.error) finish(reject, new Error(m.error.message));
+        else if (m.result?.tools) finish(resolve, { tools: m.result.tools.map((t) => t.name) });
+      }
+    });
+    const write = (o) => child.stdin.write(`${JSON.stringify(o)}\n`);
+    write({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {} } });
+    write({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    child.stdin.end();
+  });
 }
 
 export function runMcp({ client, input = process.stdin, output = process.stdout }) {

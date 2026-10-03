@@ -40,7 +40,7 @@ const OPTIONS = {
 
 class Usage extends Error {}
 
-export async function main(argv, { env = process.env, out = console.log, err = console.error, input = process.stdin, output = process.stdout } = {}) {
+export async function main(argv, { env = process.env, out = console.log, err = console.error, input = process.stdin, output = process.stdout, probeMcp } = {}) {
   let args;
   try {
     args = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
@@ -84,7 +84,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
       }
       case 'approve': case 'cancel': case 'requeue': case 'retry-download':
         needKey(); print(await client().act(id(), cmd), formatJob); return 0;
-      case 'doctor': return await doctor(p, client(), out);
+      case 'doctor': return await doctor(p, client(), out, { env, probeMcp, config: o.config });
       default: throw new Usage(`Unknown command: ${cmd}`);
     }
   } catch (e) {
@@ -169,7 +169,7 @@ async function serve(p, out, { forgetExtension = false } = {}) {
   return 0;
 }
 
-async function doctor(p, client, out) {
+async function doctor(p, client, out, { env = process.env, probeMcp, config } = {}) {
   const rows = [];
   const add = (ok, what, hint) => rows.push(`${ok ? '✅' : '❌'} ${what}${!ok && hint ? `: ${hint}` : ''}`);
   const [major] = process.versions.node.split('.').map(Number);
@@ -188,6 +188,28 @@ async function doctor(p, client, out) {
     add(status.session?.cap != null, 'Credit cap set', 'set it in the dashboard');
     add(!status.session?.halted, 'Not halted', status.session?.haltReason);
   }
+
+  // MCP: the exact command `install-claude` writes, and the config Claude Desktop reads.
+  const { buildServerEntry, defaultConfigPath, inspectConfig } = await import('./claude-desktop.js');
+  const { TOOL_NAMES, probeMcpServer } = await import('./mcp.js');
+  const entry = buildServerEntry({ env });
+  let tools = null;
+  let mcpError = null;
+  try {
+    const probe = probeMcp ?? (() => probeMcpServer({ command: entry.command, args: entry.args, env: { ...process.env, ...(entry.env ?? {}) } }));
+    tools = (await probe()).tools ?? [];
+  } catch (e) { mcpError = e.message; }
+  add(tools != null, `MCP server command works (${entry.command} ${entry.args.join(' ')})`, mcpError ?? 'the server did not answer');
+  const list = (names) => [...names].sort().join(',');
+  add(tools != null && list(tools) === list(TOOL_NAMES), `MCP tools (${TOOL_NAMES.length})`, tools == null ? 'no tools list' : `got: ${tools.join(', ') || 'none'}`);
+  const cfg = inspectConfig({ file: config || defaultConfigPath({ env }), entry });
+  const cfgHint = {
+    missing: 'no config file: run `flowpilot install-claude`',
+    unreadable: 'the file is not valid JSON',
+    'no-server': 'no flowpilot entry: run `flowpilot install-claude`',
+    different: 'points elsewhere: run `flowpilot install-claude`',
+  }[cfg.reason];
+  add(cfg.ok, `Claude Desktop config (${cfg.file})`, cfgHint);
   out(rows.join('\n'));
   return rows.every((r) => r.startsWith('✅')) ? 0 : 1;
 }
