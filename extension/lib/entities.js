@@ -251,6 +251,20 @@ export function cameraSentence(camera, template) {
   return withNote || null;
 }
 
+// The composePrompt input for a job that names entities. A linked Flow Character is text-prefixed
+// with `@Name` and its description block is left out (the server holds the face) — the same
+// treatment a shot gives it, so a plain job and its dry run compose to the same text (report §10 #7).
+// `omitEntityBlocks` a caller already set is kept. Returns the input unchanged with no characters.
+export function composeInputFor(spec = {}, resolved = []) {
+  const characters = (resolved ?? []).filter((e) => e.flowCharacter?.name);
+  if (!characters.length) return spec;
+  return {
+    ...spec,
+    prompt: [characters.map((e) => `@${e.flowCharacter.name}`).join(' '), spec.prompt].filter(Boolean).join('\n'),
+    omitEntityBlocks: [...new Set([...(spec.omitEntityBlocks ?? []), ...characters.map((e) => e.id)])],
+  };
+}
+
 function sectionText(section, input, ctx) {
   const { styleEntity, template, entities } = ctx;
   switch (section) {

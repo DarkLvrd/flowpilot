@@ -278,8 +278,11 @@ test('a job that names a linked Flow Character carries Flow\'s entity id, and th
   assert.equal(r.value.settings.input, 'ingredients');
   assert.match(r.value.recipe, /r2v/);
   assert.equal(r.value.expectedCost, 4); // priced as a reference job, shown before any click
-  // The composed block is still composed: the same job, one prompt, both facts.
-  assert.match(r.value.prompt, /CHARACTER — NANCY/);
+  // The character is named, not described: its description block stays out of the prompt (the
+  // server holds the face, and the block itself says it is never sent — BUG-7), while the chip still
+  // carries the subject and the pre-spend check confirms it by Flow's id (BUG-2/4).
+  assert.equal(r.value.prompt.includes('CHARACTER — NANCY'), false);
+  assert.equal(r.value.prompt.startsWith('@nancy\n'), true);
   assert.deepEqual(r.value.entities.map((e) => e.entityId.startsWith('ent_')), [true]); // the library id, for the record
   assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
 });
@@ -921,6 +924,32 @@ test('the project\'s Flow Characters are read from the media response, and agent
   await settle();
   assert.equal(replyTo(30).ok, true, replyTo(30).error);
   assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+});
+
+test('a plain job with a linked Flow Character names it and leaves its never-sent block out', async () => {
+  const CHAR_ID = '0bfec740-409e-42f5-80d1-82baac3349f3';
+  const made = await send({ cmd: 'entityUpsert', entity: {
+    kind: 'character', name: 'Nancy', approved: true,
+    description: 'Flow Character "nancy" — Flow holds the face; the prompt names it and Flow\'s picker attaches it. This block is never sent.',
+    flowCharacter: { name: 'nancy', entityId: CHAR_ID },
+  } });
+  assert.equal(made.ok, true, made.error);
+  try {
+    const r = await send({ cmd: 'addJob', spec: { name: 'nancy job', prompt: 'nancy stands at the railing', entities: ['Nancy'], resolution: '360p', durationS: 4 } });
+    assert.equal(r.ok, true, r.error);
+    // The prompt must not carry a sentence about itself that is false, and the block stays out as it does for a shot.
+    assert.equal(r.value.prompt.includes('This block is never sent'), false);
+    assert.equal(r.value.promptParts.some((p) => p.kind === 'entity'), false);
+    assert.equal(r.value.prompt.startsWith('@nancy\n'), true);
+    assert.match(r.value.prompt, /nancy stands at the railing/);
+    assert.equal(r.value.prompt, r.value.promptParts.map((p) => p.text).join('\n\n')); // what is checked verbatim is what is sent
+    // The dry run (`composePrompt` / `flowpilot compose-prompt`) is the same text the job would send.
+    const preview = await send({ cmd: 'composePrompt', spec: { prompt: 'nancy stands at the railing', entities: ['Nancy'], durationS: 4 } });
+    assert.equal(preview.ok, true, preview.error);
+    assert.equal(preview.value.text, r.value.prompt);
+  } finally {
+    await send({ cmd: 'entityRemove', name: 'Nancy' });
+  }
 });
 
 test('agents may write entities through the helper but still cannot set the cap or clear a halt', async () => {

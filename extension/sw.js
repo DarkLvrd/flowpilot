@@ -19,7 +19,7 @@ import { buildReceipt } from './lib/receipt.js';
 import { resumePlan, resumeGate, coolDown } from './lib/resume.js';
 import { buildDiagnostics } from './lib/diagnostics.js';
 import { FLOW_COMPAT, compatNote, compatReport } from './lib/compat.js';
-import { createEntityStore, createTemplateStore, resolveEntities, composePrompt as compose, libraryWarnings, appendConsistencyBlock } from './lib/entities.js';
+import { createEntityStore, createTemplateStore, resolveEntities, composeInputFor, composePrompt as compose, libraryWarnings, appendConsistencyBlock } from './lib/entities.js';
 import { loadDefaults } from './lib/prompt-assets.js';
 import { createShotStore, planShotImport, stillJobSpec, materializeShot, stillGate, approveStill, estimateShotCredits } from './lib/shots.js';
 import { QC_POLICY, qcVerdict, buildQcRecord, fixJobSpec, fixCostText, policyFor, jobPromptParts } from './lib/qc.js';
@@ -340,17 +340,18 @@ async function addJob(spec, { recipes, projectId } = {}) {
 // so every existing path stays byte-for-byte what it was. Unknown, ambiguous or unapproved entities
 // throw here: nothing is queued and no credits can be priced around a subject nobody approved.
 //
-// An entity that IS a linked Flow Character also becomes `characters`: the composed prompt names it,
-// so the composer must attach it through Flow's own picker and the pre-spend check must confirm it
-// by Flow's entity id (report §8.1). Without this the block was composed and sent while the
-// character was dropped (BUG-2/4); a mode that cannot carry one (Frames) is refused by buildJob
-// rather than quietly spending on a clip without the subject.
+// An entity that IS a linked Flow Character is text-prefixed with `@Name` and its description block
+// is left out of the prompt (the server holds the face) — handled by composeInputFor — and it also
+// becomes `characters`: the composed prompt names it, so the composer must attach it through Flow's
+// own picker and the pre-spend check must confirm it by Flow's entity id (report §8.1). Without the
+// omit the block was composed and sent while the character was dropped (BUG-2/4); a mode that cannot
+// carry one (Frames) is refused by buildJob rather than quietly spending on a clip without the subject.
 async function withComposedEntities(spec, projectId) {
   const names = Array.isArray(spec.entities) ? spec.entities : (spec.entities ? [spec.entities] : []);
   if (!names.length) return spec;
   const [library, template] = await Promise.all([entityStore.library(projectId), templateStore.get(projectId)]);
   const resolved = resolveEntities(library, names);
-  const composed = compose({ prompt: spec.prompt, entities: names, audio: spec.audio }, library, template);
+  const composed = compose(composeInputFor({ prompt: spec.prompt, entities: names, audio: spec.audio }, resolved), library, template);
   // Flow's own entity id, never the library id: that is what its picker attaches and what its own
   // record echoes back. `entityStore` validates a link's id and name when it is written.
   const linked = resolved.filter((e) => e.flowCharacter).map((e) => ({ entityId: e.flowCharacter.entityId, name: e.flowCharacter.name }));
@@ -688,11 +689,13 @@ const handlers = {
   async composePrompt({ projectId, spec }) {
     const pid = await projectIdOf(projectId);
     const [library, template] = await Promise.all([entityStore.library(pid), templateStore.get(pid)]);
-    const composed = compose({ ...(spec ?? {}) }, library, template);
+    const resolved = resolveEntities(library, spec?.entities ?? []);
+    // The same character handling addJob uses, so the preview is the text a queued job would send.
+    const composed = compose(composeInputFor(spec ?? {}, resolved), library, template);
     return {
       projectId: pid,
       ...composed,
-      entities: resolveEntities(library, spec?.entities ?? []).map((e) => ({ entityId: e.id, name: e.name, version: e.version, mediaId: e.primaryRefMediaId })),
+      entities: resolved.map((e) => ({ entityId: e.id, name: e.name, version: e.version, mediaId: e.primaryRefMediaId })),
     };
   },
   addJob: async ({ spec }) => addJob(spec),

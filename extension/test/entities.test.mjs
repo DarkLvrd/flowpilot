@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { sha256Hex } from '../lib/sha256.js';
 import { loadDefaults } from '../lib/prompt-assets.js';
 import {
-  KINDS, ROLES, entityBlock, mergeNegative, resolveEntities, composePrompt, promptBaseHash,
+  KINDS, ROLES, entityBlock, mergeNegative, resolveEntities, composePrompt, composeInputFor, promptBaseHash,
   appendConsistencyBlock, supersedeRef, reviseEntity, validateEntity, validateTemplate,
   emptyLibrary, normalizeLibrary, createEntityStore, createTemplateStore, DEFAULT_TEMPLATE, libraryWarnings,
 } from '../lib/entities.js';
@@ -269,6 +269,27 @@ test('a flowCharacter entity still needs approval, and its description block sta
   const composed = composePrompt({ prompt: '@nancy turns to camera', entities: [linked.id], omitEntityBlocks: [linked.id] }, { ...emptyLibrary('p1'), entities: [linked] }, template);
   assert.equal(composed.parts.some((p) => p.kind === 'entity'), false);
   assert.match(composed.text, /@nancy turns to camera/);
+});
+
+// A linked character is named `@Name` and its description block stays out of the prompt — the whole
+// sentence the dashboard writes on it ("This block is never sent") is only true because the block
+// never reaches the prompt. The pure input builder is shared by the job path and the dry run.
+test('composeInputFor names a linked character, omits its never-sent block, and leaves a plain entity alone', () => {
+  const linked = entity({ flowCharacter: flowCharacter(), description: 'Flow Character "nancy" — the prompt names it and Flow\'s picker attaches it. This block is never sent.' });
+  const lib = { ...emptyLibrary('p1'), entities: [linked] };
+  const input = composeInputFor({ prompt: 'nancy stands', entities: ['Rudy'] }, resolveEntities(lib, ['Rudy']));
+  assert.equal(input.prompt, '@nancy\nnancy stands');
+  assert.deepEqual(input.omitEntityBlocks, [linked.id]);
+  const composed = composePrompt(input, lib, template);
+  assert.equal(composed.parts.some((p) => p.kind === 'entity'), false);
+  assert.equal(composed.text.includes('never sent'), false);
+  assert.match(composed.text, /@nancy\nnancy stands/);
+
+  const plain = entity({ id: 'ent_plain', name: 'Plain', flowCharacter: null });
+  const plainLib = { ...emptyLibrary('p1'), entities: [plain] };
+  const plainInput = composeInputFor({ prompt: 'x', entities: ['Plain'] }, resolveEntities(plainLib, ['Plain']));
+  assert.equal(plainInput.prompt, 'x');
+  assert.equal(plainInput.omitEntityBlocks, undefined);
 });
 
 // A linked character is not a missing reference: Flow holds the face, so the library stops nagging
