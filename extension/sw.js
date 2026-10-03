@@ -19,6 +19,8 @@ import { buildReceipt } from './lib/receipt.js';
 import { resumePlan, resumeGate, coolDown } from './lib/resume.js';
 import { buildDiagnostics } from './lib/diagnostics.js';
 import { FLOW_COMPAT, compatNote, compatReport } from './lib/compat.js';
+import { createEntityStore, createTemplateStore, resolveEntities, composePrompt as compose, libraryWarnings } from './lib/entities.js';
+import { loadDefaults } from './lib/prompt-assets.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -31,6 +33,33 @@ const store = createJobStore(chrome.storage.local);
 const local = {
   async get(key, fallback) { return (await chrome.storage.local.get(key))[key] ?? fallback; },
   set(key, value) { return chrome.storage.local.set({ [key]: value }); },
+};
+
+// ---- Entity library (report §2.1) ----------------------------------------------------------
+
+// The helper mirrors the library to ~/.flowpilot/projects/<projectId>/entities.json so a reinstall
+// does not lose it (report §4.8). Mirroring is best-effort: without the helper the library still
+// lives in chrome.storage.local, and a mirror failure must never fail the write.
+async function mirrorLibrary(library) {
+  if (!bridge.connected) return;
+  try { await bridge.request('writeEntities', { projectId: library.projectId, library }); } catch { /* helper went away; the next write tries again */ }
+}
+
+const entityStore = createEntityStore(chrome.storage.local, { onChange: (library) => { mirrorLibrary(library); } });
+let templateStore = createTemplateStore(chrome.storage.local);
+
+// The asset-derived template (section order, audio line, negatives, camera/motion libraries) is the
+// default; a project override, once one exists, replaces it for that project.
+loadDefaults().then((d) => { templateStore = createTemplateStore(chrome.storage.local, { defaults: d.template }); }).catch(() => {});
+
+const projectIdOf = async (projectId) => {
+  if (projectId != null && projectId !== '') {
+    if (!/^[0-9a-f-]{36}$/.test(projectId)) throw new Error('Bad project id');
+    return projectId;
+  }
+  const tab = await workTab.get();
+  if (!tab) throw new Error('No work tab: open a Flow project in the tab you bound, or pass a project id');
+  return tab.projectId;
 };
 
 // ---- Flow tab access ----------------------------------------------------------------------
@@ -285,7 +314,26 @@ async function addJob(spec, { recipes, projectId } = {}) {
   const pid = projectId ?? spec.projectId ?? tab.projectId;
   // The catalog is read once per batch (import passes its own) but validated through the one path.
   const cat = recipes === undefined ? await catalogRecipes() : recipes;
-  return store.add(buildJob(spec, { projectId: pid, recipes: cat }));
+  return store.add(buildJob(await withComposedEntities(spec, pid), { projectId: pid, recipes: cat }));
+}
+
+// A job that names entities gets their canonical blocks, the style lock and the merged negatives
+// composed into its prompt, byte-verbatim (report §2.2). A job that names none is returned untouched,
+// so every existing path stays byte-for-byte what it was. Unknown, ambiguous or unapproved entities
+// throw here: nothing is queued and no credits can be priced around a subject nobody approved.
+async function withComposedEntities(spec, projectId) {
+  const names = Array.isArray(spec.entities) ? spec.entities : (spec.entities ? [spec.entities] : []);
+  if (!names.length) return spec;
+  const [library, template] = await Promise.all([entityStore.library(projectId), templateStore.get(projectId)]);
+  const resolved = resolveEntities(library, names);
+  const composed = compose({ prompt: spec.prompt, entities: names, audio: spec.audio }, library, template);
+  return {
+    ...spec,
+    prompt: composed.text,
+    promptParts: composed.parts,
+    // Frozen at add time: the job records the version of each subject it was composed with.
+    entities: resolved.map((e) => ({ entityId: e.id, version: e.version, mediaId: e.primaryRefMediaId, role: 'inFrame' })),
+  };
 }
 
 // Reads the model catalog for pricing. A blocked RPC halts everything and refuses the job rather
@@ -424,6 +472,65 @@ const handlers = {
     return selfCheck(tabId);
   },
   selfCheck: async ({ tabId }) => selfCheck(tabId),
+
+  // ---- Entities (report §2.7): job data, so agents may write these; the cap, the halt and the work
+  // tab stay dashboard-only. Nothing here spends credits.
+  async entities({ projectId }) {
+    const pid = await projectIdOf(projectId);
+    const [library, template, defaults] = await Promise.all([
+      entityStore.library(pid), templateStore.get(pid), loadDefaults(),
+    ]);
+    return { projectId: pid, library, template, style: defaults.style, imageStyleText: defaults.imageStyleText, warnings: libraryWarnings(library) };
+  },
+  async entityUpsert({ projectId, entity }, sender) {
+    const pid = await projectIdOf(projectId);
+    return entityStore.upsert(pid, { by: fromDashboard(sender) ? 'dashboard' : 'agent', ...(entity ?? {}) });
+  },
+  async entityApprove({ projectId, name, by }, sender) {
+    return entityStore.approve(await projectIdOf(projectId), name, { by: by ?? (fromDashboard(sender) ? 'dashboard' : 'agent') });
+  },
+  async entityUnapprove({ projectId, name, reason }, sender) {
+    return entityStore.unapprove(await projectIdOf(projectId), name, { reason, by: fromDashboard(sender) ? 'dashboard' : 'agent' });
+  },
+  async entityAddRef({ projectId, name, ref, reason }, sender) {
+    return entityStore.addRef(await projectIdOf(projectId), name, ref, { reason, by: fromDashboard(sender) ? 'dashboard' : 'agent' });
+  },
+  async entitySupersede({ projectId, name, ref, reason }, sender) {
+    return entityStore.supersedeRef(await projectIdOf(projectId), name, ref, { reason, by: fromDashboard(sender) ? 'dashboard' : 'agent' });
+  },
+  async entityRemove({ projectId, name }) {
+    return entityStore.remove(await projectIdOf(projectId), name);
+  },
+  // The project's one style entity, from the canonical style_lock.md asset (report §2.1).
+  async entitySetStyle({ projectId, name }) {
+    const pid = await projectIdOf(projectId);
+    const defaults = await loadDefaults();
+    return entityStore.setStyle(pid, { name: name ?? 'Style lock', description: defaults.style.description, negative: defaults.style.negative.join(', '), by: 'dashboard' });
+  },
+  async entityImport({ projectId, library, mode }) {
+    return entityStore.importLibrary(await projectIdOf(projectId), library, { mode: mode ?? 'replace' });
+  },
+  async entityExport({ projectId }) {
+    return entityStore.exportLibrary(await projectIdOf(projectId));
+  },
+  // Reinstall recovery: pull the helper's mirrored file back into chrome.storage (report §4.8).
+  async entityRestore({ projectId, mode = 'merge' }) {
+    const pid = await projectIdOf(projectId);
+    if (!bridge.connected) throw new Error('The helper is not connected, so there is no mirrored library to restore from (start it with `npx flowpilot serve`)');
+    const { library } = await bridge.request('readEntities', { projectId: pid });
+    return { projectId: pid, mode, library: await entityStore.importLibrary(pid, library, { mode }) };
+  },
+  // Dry run: exactly the text Flow would receive for this composition, with per-part hashes.
+  async composePrompt({ projectId, spec }) {
+    const pid = await projectIdOf(projectId);
+    const [library, template] = await Promise.all([entityStore.library(pid), templateStore.get(pid)]);
+    const composed = compose({ ...(spec ?? {}) }, library, template);
+    return {
+      projectId: pid,
+      ...composed,
+      entities: resolveEntities(library, spec?.entities ?? []).map((e) => ({ entityId: e.id, name: e.name, version: e.version, mediaId: e.primaryRefMediaId })),
+    };
+  },
   addJob: async ({ spec }) => addJob(spec),
   previewJob: async ({ spec }) => addPreviewJob(spec),
   // Storyboard import: preview plans and prices; import validates all rows again and refuses the
@@ -552,15 +659,20 @@ const handlers = {
 // ---- Helper bridge ------------------------------------------------------------------------
 
 // What agents may do through the helper: the same as a dashboard click, minus the cap, the halt,
-// the work tab and pairing (docs/SPEC.md decisions 7-9).
-const AGENT_COMMANDS = new Set(['status', 'addJob', 'previewImport', 'importJobs', 'listPresets', 'approve', 'cancel', 'requeue', 'retryDownload']);
+// the work tab and pairing (docs/SPEC.md decisions 7-9). Entity and prompt-composition commands are
+// job data, so they are allowed (report §2.7).
+const AGENT_COMMANDS = new Set([
+  'status', 'addJob', 'previewImport', 'importJobs', 'listPresets', 'approve', 'cancel', 'requeue', 'retryDownload',
+  'entities', 'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede',
+  'entityRemove', 'entitySetStyle', 'entityImport', 'entityExport', 'entityRestore', 'composePrompt',
+]);
 
 const bridge = createBridge({
   url: `ws://127.0.0.1:${HELPER_PORT}/bridge`,
   async onCommand(cmd, args) {
     if (!AGENT_COMMANDS.has(cmd)) throw new Error(`Agents cannot ${cmd}; that is done in the dashboard`);
     const value = await handlers[cmd](args, null);
-    if (!READS.has(cmd)) tick();
+    if (!NO_TICK.has(cmd)) tick();
     return value;
   },
   onChange: (connected) => local.set('flowpilot.helper', { connected }),
@@ -569,13 +681,19 @@ const bridge = createBridge({
 // Only extension pages (popup, dashboard) may send commands; content scripts run on Flow's origin.
 const fromExtensionPage = (sender) => sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
 
-// Reads must not tick: a tick writes storage, which makes the dashboard read status again (a loop).
-const READS = new Set(['status', 'selfCheck', 'previewImport', 'listPresets']);
+// Reads must not tick: a tick writes storage, which makes the dashboard read status again (a loop),
+// and entity/prompt commands never need a runner tick at all.
+const NO_TICK = new Set([
+  'status', 'selfCheck', 'previewImport', 'listPresets',
+  'entities', 'composePrompt', 'entityExport',
+  'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede', 'entityRemove',
+  'entitySetStyle', 'entityImport', 'entityRestore',
+]);
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!fromExtensionPage(sender) || !handlers[msg?.cmd]) return false;
   handlers[msg.cmd](msg, sender)
-    .then((value) => { reply({ ok: true, value }); if (!READS.has(msg.cmd)) tick(); })
+    .then((value) => { reply({ ok: true, value }); if (!NO_TICK.has(msg.cmd)) tick(); })
     .catch((e) => reply({ ok: false, error: e.message }));
   return true;
 });

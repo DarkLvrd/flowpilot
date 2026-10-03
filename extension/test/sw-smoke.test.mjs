@@ -445,3 +445,100 @@ test('the dashboard saves a local diagnostic bundle: dated, honest, and free of 
   assert.ok(!/Bearer\s+\S/.test(r.value.text));
   assert.match((await send({ cmd: 'diagnostics' }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
 });
+
+// ---- Entity library + composer (report §2.1/§2.2/§2.7) ---------------------------------------
+
+
+test('an entity is created unapproved, approved from the dashboard, and mirrored to the helper file', async () => {
+  const made = await send({ cmd: 'entityUpsert', entity: { kind: 'character', name: 'Rudy', description: 'a heavyset Black man in his 30s with a full dark beard', refs: [{ mediaId: REF, role: 'sheet', label: 'rudy_sheet_v1' }] } });
+  assert.equal(made.ok, true, made.error);
+  assert.equal(made.value.approvedAt, null);
+  assert.equal(made.value.version, 1);
+  assert.equal(made.value.primaryRefMediaId, REF);
+
+  const approved = await send({ cmd: 'entityApprove', name: 'Rudy' });
+  assert.equal(approved.value.approvedAt > 0, true);
+  assert.equal(approved.value.approvedBy, 'dashboard');
+
+  await settle();
+  const mirror = sockets.at(-1).sent.filter((m) => m.req === 'writeEntities').at(-1);
+  assert.equal(mirror.projectId, PID);
+  assert.equal(mirror.library.entities[0].name, 'Rudy');
+  assert.equal(mirror.library.entities[0].approvedBy, 'dashboard');
+
+  const listed = await send({ cmd: 'entities' });
+  assert.equal(listed.value.projectId, PID);
+  assert.deepEqual(listed.value.library.entities.map((e) => e.name), ['Rudy']);
+  assert.equal(listed.value.warnings.some((w) => /No style entity/.test(w)), true);
+});
+
+test('a job that names an entity gets the composed prompt verbatim and records the subject version', async () => {
+  const r = await send({ cmd: 'addJob', spec: { name: 'rudy job', prompt: 'she turns to face the camera', entities: ['Rudy'], resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.prompt.startsWith('she turns to face the camera\n\nCHARACTER — RUDY (identical in every shot): a heavyset Black man in his 30s with a full dark beard'), true);
+  assert.match(r.value.prompt, /Negative: /);
+  assert.equal(r.value.prompt, r.value.promptParts.map((p) => p.text).join('\n\n'));
+  assert.deepEqual(r.value.promptParts.map((p) => p.kind), ['base', 'entity', 'base']);
+  assert.deepEqual(r.value.entities, [{ entityId: made_id(r.value.entities), version: 1, mediaId: REF, role: 'inFrame' }]);
+  // The prompt Flow receives is the composed one, so the pre-spend verbatim check still holds.
+  assert.equal(r.value.prompt.includes(r.value.promptParts[0].text), true);
+});
+
+const made_id = ([e]) => e.entityId;
+
+test('an unknown or unapproved entity is refused before the job is queued', async () => {
+  const unknown = await send({ cmd: 'addJob', spec: { name: 'x', prompt: 'x', entities: ['Nobody'], durationS: 4 } });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /Unknown entity "Nobody"/);
+
+  await send({ cmd: 'entityUnapprove', name: 'Rudy', reason: 'checking the refusal' });
+  const unapproved = await send({ cmd: 'addJob', spec: { name: 'x', prompt: 'x', entities: ['Rudy'], durationS: 4 } });
+  assert.equal(unapproved.ok, false);
+  assert.match(unapproved.error, /not approved/i);
+
+  const before = (await send({ cmd: 'status' })).value.jobs.length;
+  assert.equal(before, (await send({ cmd: 'status' })).value.jobs.length); // nothing was queued
+  await send({ cmd: 'entityApprove', name: 'Rudy' });
+});
+
+test('the project style lock comes from the canonical asset and is inserted verbatim', async () => {
+  const styled = await send({ cmd: 'entitySetStyle' });
+  assert.equal(styled.ok, true, styled.error);
+  assert.equal(styled.value.kind, 'style');
+  assert.match(styled.value.description, /^The whole video stays in this 3D Pixar\/Disney animation style from the first frame to the last:/);
+
+  await send({ cmd: 'entityApprove', name: 'Rudy' });
+  const job = await send({ cmd: 'addJob', spec: { name: 'styled job', prompt: 'a fox runs', entities: ['Rudy'], resolution: '360p', durationS: 4 } });
+  assert.equal(job.ok, true, job.error);
+  assert.equal(job.value.prompt.includes(styled.value.description), true);
+  assert.deepEqual(job.value.promptParts.filter((p) => p.kind).map((p) => p.kind), ['base', 'entity', 'style', 'base']);
+  const listed = await send({ cmd: 'entities' });
+  assert.equal(listed.value.library.styleId, styled.value.id);
+  assert.deepEqual(listed.value.warnings, []);
+});
+
+test('composing a prompt is a dry run: it returns the text and hashes and spends nothing', async () => {
+  const r = await send({ cmd: 'composePrompt', spec: { prompt: 'she turns to face the camera', entities: ['Rudy'] } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.entities[0].name, 'Rudy');
+  assert.match(r.value.text, /CHARACTER — RUDY/);
+  assert.equal(r.value.sha256.length, 64);
+  assert.equal(r.value.parts.every((p) => p.sha256.length === 64), true);
+  const s = (await send({ cmd: 'status' })).value.session;
+  assert.equal(s.spent, 0);
+});
+
+test('agents may write entities through the helper but still cannot set the cap or clear a halt', async () => {
+  helperSays({ id: 20, cmd: 'entityUpsert', args: { entity: { kind: 'location', name: 'Lake', description: 'a quiet lake at dawn' } } });
+  await settle(); // one helper request at a time (the CLI is sequential)
+  helperSays({ id: 21, cmd: 'composePrompt', args: { spec: { prompt: 'x', entities: ['Lake'] } } });
+  helperSays({ id: 22, cmd: 'setCap', args: { cap: 999 } });
+  helperSays({ id: 23, cmd: 'clearHalt', args: {} });
+  await settle();
+  assert.equal(replyTo(20).ok, true, replyTo(20).error);
+  assert.equal(replyTo(21).ok, false); // unapproved: the composer refuses
+  assert.match(replyTo(21).error, /not approved/i);
+  assert.match(replyTo(22).error, /Agents cannot/);
+  assert.match(replyTo(23).error, /Agents cannot/);
+  assert.equal((await send({ cmd: 'status' })).value.session.cap, 10);
+});

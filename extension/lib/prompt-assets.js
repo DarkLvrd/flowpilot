@@ -177,12 +177,19 @@ let defaultsPromise = null;
 export function loadAssetTexts() {
   textsPromise ??= (async () => {
     if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
-      const pairs = await Promise.all(ASSET_FILES.map(async (name) => {
-        const res = await fetch(chrome.runtime.getURL(`assets/prompts/${name}.md`));
-        if (!res.ok) throw new Error(`Cannot read the packaged prompt asset ${name}.md (HTTP ${res.status})`);
-        return [name, await res.text()];
-      }));
-      return Object.fromEntries(pairs);
+      try {
+        const pairs = await Promise.all(ASSET_FILES.map(async (name) => {
+          const res = await fetch(chrome.runtime.getURL(`assets/prompts/${name}.md`));
+          if (!res.ok) throw new Error(`Cannot read the packaged prompt asset ${name}.md (HTTP ${res.status})`);
+          return [name, await res.text()];
+        }));
+        return Object.fromEntries(pairs);
+      } catch (e) {
+        // Under `node --test` the service worker runs against a fake `chrome`, so the packaged-URL
+        // fetch cannot work; fall through to the files on disk. In a real browser there is no disk
+        // to fall back to, and the missing asset stays a hard error.
+        if (typeof process === 'undefined') throw e;
+      }
     }
     const { readFileSync } = await import('node:fs');
     return Object.fromEntries(ASSET_FILES.map((name) => [name, readFileSync(new URL(`${name}.md`, assetsDirUrl()), 'utf8')]));

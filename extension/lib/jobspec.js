@@ -92,8 +92,26 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   // referencePlan holds the classified references (media ids and/or absolute paths); `references`
   // is filled with the resolved media ids at submit, once any path has been uploaded, and is what
   // the pre-spend check verifies against what the composer actually has attached.
+  //
+  // `entities`/`promptParts` are the consistency library's record (report §2.7): the *composed*
+  // subject list and the prompt parts with their hashes, already resolved and inserted by the
+  // service worker's addJob. A raw name here (entities as strings, or a part without a sha256) is
+  // refused rather than stored, so a job can never claim a subject its prompt did not compose.
+  const composed = {};
+  if (spec.entities != null) {
+    if (!Array.isArray(spec.entities) || spec.entities.some((e) => typeof e?.entityId !== 'string')) {
+      throw new Error('A job\'s entities must be composed records (entityId, version, mediaId, role): compose them through addJob/flowpilot_add_job, not as raw names');
+    }
+    composed.entities = spec.entities;
+  }
+  if (spec.promptParts != null) {
+    if (!Array.isArray(spec.promptParts) || spec.promptParts.some((p) => typeof p?.text !== 'string' || typeof p?.sha256 !== 'string')) {
+      throw new Error('A job\'s promptParts must be composed prompt parts (kind, ref, sha256, text)');
+    }
+    composed.promptParts = spec.promptParts;
+  }
   return {
     name, projectId, prompt, settings, referencePlan, references: null, recipe,
-    expectedCost, modelFamily, outputPath, ...(relativePath ? { relativePath } : {}),
+    expectedCost, modelFamily, outputPath, ...(relativePath ? { relativePath } : {}), ...composed,
   };
 }

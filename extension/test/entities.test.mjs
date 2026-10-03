@@ -5,7 +5,7 @@ import { loadDefaults } from '../lib/prompt-assets.js';
 import {
   KINDS, ROLES, entityBlock, mergeNegative, resolveEntities, composePrompt, promptBaseHash,
   appendConsistencyBlock, supersedeRef, reviseEntity, validateEntity, validateTemplate,
-  emptyLibrary, normalizeLibrary, createEntityStore, createTemplateStore, DEFAULT_TEMPLATE,
+  emptyLibrary, normalizeLibrary, createEntityStore, createTemplateStore, DEFAULT_TEMPLATE, libraryWarnings,
 } from '../lib/entities.js';
 
 const MEDIA1 = 'bc92bce2-2183-4ab2-80f6-d5aead42857a';
@@ -309,6 +309,22 @@ test('every write mirrors the library through the onChange hook', async () => {
   await store.upsert('p1', { kind: 'character', name: 'Rudy', description: 'a man' });
   await store.approve('p1', 'Rudy');
   assert.deepEqual(seen, [1, 1]);
+});
+
+test('libraryWarnings reports what the library cannot do yet, without blocking anything', () => {
+  assert.deepEqual(libraryWarnings(library()), []);
+  const bare = library({
+    styleId: null,
+    entities: [
+      entity(),
+      entity({ id: 'ent_2', name: 'Hellcat', kind: 'vehicle', refs: [{ mediaId: MEDIA2, role: 'side', label: 'rudy_sheet_v1' }] }),
+      entity({ id: 'ent_3', name: 'Lake', kind: 'location', refs: [], primaryRefMediaId: null }),
+    ],
+  });
+  const warnings = libraryWarnings(bare);
+  assert.ok(warnings.some((w) => /Lake has no locked reference/.test(w)));
+  assert.ok(warnings.some((w) => /label "rudy_sheet_v1" is used by Rudy and Hellcat/.test(w)));
+  assert.ok(warnings.some((w) => /No style entity/.test(w)));
 });
 
 test('validateTemplate reports missing sections and impossible durations; the default is clean', () => {

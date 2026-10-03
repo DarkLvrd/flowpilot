@@ -117,6 +117,33 @@ export function normalizeLibrary(raw, projectId = raw?.projectId) {
   return { schema: 1, projectId, styleId, entities, updatedAt: raw.updatedAt ?? 0 };
 }
 
+// Advisory hygiene warnings (report §2.1 rule 5, §4.1). These never block a job: they tell the
+// person what the library cannot do yet (no locked reference, and the label collisions the asset
+// picker cannot survive, since it finds a tile by the media's name).
+export function libraryWarnings(library) {
+  const out = [];
+  const labels = new Map();
+  for (const e of library?.entities ?? []) {
+    const refs = e.refs ?? [];
+    if (e.kind !== 'style' && refs.length === 0) {
+      out.push(`${e.name} has no locked reference yet: the block is text-only until a Flow media id is added`);
+    }
+    for (const ref of refs) {
+      if (!ref.label) out.push(`${e.name}: the reference ${ref.mediaId} has no label; the picker finds tiles by name`);
+      const key = ref.label?.toLowerCase();
+      if (key) labels.set(key, [...(labels.get(key) ?? []), e.name]);
+    }
+    if (refs.length > 1 && refs.some((r) => r.role === refs[0].role)) {
+      out.push(`${e.name}: two references share the role "${refs[0].role}"; one consistent look per entity is what keeps it consistent`);
+    }
+  }
+  for (const [label, names] of labels) {
+    if (names.length > 1) out.push(`the reference label "${label}" is used by ${names.join(' and ')}; labels must be unique per project`);
+  }
+  if (!library?.styleId) out.push('No style entity yet: add the project style lock so every prompt ends with it');
+  return out;
+}
+
 // ---- pure composer pieces -------------------------------------------------------------------
 
 // One entity → the canonical block inserted into every prompt that uses it, verbatim, plus its
