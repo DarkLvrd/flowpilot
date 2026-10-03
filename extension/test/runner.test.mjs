@@ -103,6 +103,18 @@ test('submits an approved job: the click is recorded before it happens', async (
   assert.equal((await store.session()).spent, 4);
 });
 
+test('a plain (no-reference) job stored with references: null submits through the real path', async () => {
+  // addJob stores a plain job with references: null; the pre-spend check must read that as
+  // "no references" and submit, never throw and wedge the job in submitting (finding #1).
+  const { store, world, runner } = await setup();
+  const job = await approved(store, 'a', { references: null });
+  await runner.tick();
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'submitted');
+  assert.equal((await store.session()).spent, 4);
+});
+
 test('a failed pre-spend check fails the job and never clicks', async () => {
   const { store, world, runner } = await setup({ page: { prompt: 'something else' } });
   const job = await approved(store, 'a');

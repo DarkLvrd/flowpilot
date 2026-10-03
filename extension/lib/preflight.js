@@ -67,7 +67,11 @@ export function checkBeforeSpend(job, page, budget) {
 
 // Every reference the job resolved (media ids for id-refs, the ids its path-refs uploaded to) must
 // be the exact set attached in the composer — never more, never fewer, never a different id.
-function checkReferences(want = {}, attached = {}, problems) {
+function checkReferences(want, attached, problems) {
+  // A plain job stores references: null (addJob); null does not trigger a default param, so read
+  // both as "nothing" here rather than crash on `.ingredients` and wedge the job in submitting.
+  want = want ?? {};
+  attached = attached ?? {};
   const wantIng = want.ingredients ?? [];
   const gotIng = attached.ingredients ?? [];
   const same = wantIng.length === gotIng.length && [...wantIng].sort().join() === [...gotIng].sort().join();

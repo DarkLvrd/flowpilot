@@ -112,6 +112,15 @@ test('a job with no references and nothing attached passes the reference check',
     { references: { input: 'ingredients', ingredients: [], firstFrame: null, lastFrame: null } }).join(), /reference|ingredient/i);
 });
 
+test('a plain job stores references: null (addJob) — the check must not crash on it', () => {
+  // addJob stores a non-reference job with references: null; the default param only covers
+  // undefined, so a null here must still be read as "no references" and pass, never throw.
+  assert.deepEqual(problems({ attached: { ingredients: [], firstFrame: null, lastFrame: null } },
+    { references: null }), []);
+  // Even with no attached field read back at all, a null-reference job must not throw.
+  assert.deepEqual(problems({ attached: undefined }, { references: null }), []);
+});
+
 test('a free image may have no cost line, but a shown cost must still be 0', () => {
   const image = { settings: { kind: 'image', aspect: '16:9', count: 1 }, expectedCost: 0, modelFamily: '🍌 Nano Banana 2' };
   const imagePage = { summary: { kind: 'image', resolution: null, durationS: null, aspect: '16:9', count: 1 }, input: null, model: '🍌 Nano Banana 2' };
