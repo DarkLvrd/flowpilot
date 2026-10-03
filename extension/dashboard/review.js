@@ -20,8 +20,6 @@ const el = (tag, props = {}, ...children) => {
   return node;
 };
 
-const TICK = { pass: '✅', fail: '❌' };
-
 // A fix is never taken without a deliberate yes. In the browser that is the real confirm dialog; in
 // any environment without one, the answer is no (nothing is queued by surprise).
 const confirmFix = (message) => (typeof confirm === 'function' ? confirm(message) : false);

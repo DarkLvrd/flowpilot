@@ -481,7 +481,7 @@ async function qcCommand(id, o, { client, needKey, print }) {
 }
 
 function formatReview(view) {
-  const lines = [`${view.id} · ${view.name ?? ''} (${view.state})`.replace(' ·  ', ' ')];
+  const lines = [[view.id, view.name, `(${view.state})`].filter((v) => v != null && v !== '').join(' · ')];
   if (!view.reviewed) {
     lines.push('No QC verdict yet. Look at the clip, then record one — every visible check at once:');
     lines.push(`  flowpilot qc ${view.id} --identity pass --wardrobe pass --location pass --artefacts pass --style pass [--note "what you saw"]`);
