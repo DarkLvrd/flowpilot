@@ -7,7 +7,9 @@
 //   helper → extension  { id, cmd, args }          extension → helper  { id, ok, value | error }
 //   extension → helper  { rid, req, ... }          helper → extension  { rid, ok, value | error }
 //     req: 'pairCode' (the dashboard's "Pair an agent"), 'writeFile' { path, data: base64 },
-//          'readMedia' { path } → { name, type, data: base64 } for a reference image, 'ping'
+//          'readMedia' { path } → { name, type, data: base64 } for a reference image, 'ping',
+//          'writeEntities' { projectId, library } and 'readEntities' { projectId } — the entity
+//          library mirror under the helper home (report §4.8)
 //
 // Reachable only from this machine and never from web pages: bound to 127.0.0.1, Host must be
 // 127.0.0.1/localhost (DNS rebinding), requests carrying a browser Origin are refused, and only a
@@ -16,6 +18,8 @@
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { writeMedia, readMedia } from './files.js';
+import { paths } from './client.js';
+import { writeEntitiesFile, readEntitiesFile } from './entities-file.js';
 
 const MAX_BODY = 1 << 20;
 const EXTENSION_TIMEOUT_MS = 30_000;
@@ -25,7 +29,7 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-export function createHelper({ keyring, pin = { check: () => true }, host = '127.0.0.1', log = () => {} }) {
+export function createHelper({ keyring, pin = { check: () => true }, host = '127.0.0.1', log = () => {}, home = paths().home }) {
   let port = null;
   let extension = null; // the one connected extension socket
   let nextId = 0;
@@ -51,6 +55,8 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
       case 'pairCode': return keyring.newCode();
       case 'writeFile': return { path: writeMedia(req.path, Buffer.from(String(req.data ?? ''), 'base64')) };
       case 'readMedia': return readMedia(req.path);
+      case 'writeEntities': return { path: writeEntitiesFile(home, req.projectId, req.library) };
+      case 'readEntities': return { library: readEntitiesFile(home, req.projectId) };
       default: throw new Error(`Unknown request: ${req.req}`);
     }
   }
@@ -123,14 +129,38 @@ export function createHelper({ keyring, pin = { check: () => true }, host = '127
     agentOf(req);
     if (req.method === 'GET' && path === '/status') return callExtension('status');
     if (req.method === 'POST' && path === '/jobs') return callExtension('addJob', { spec: (await readJson(req)).spec ?? {} });
-    let m = /^\/jobs\/([\w-]+)$/.exec(path);
-    if (req.method === 'GET' && m) {
-      const job = (await callExtension('status')).jobs?.find((j) => j.id === m[1]);
-      if (!job) throw new HttpError(404, `No job ${m[1]}`);
+
+    // ---- Entities and prompt composition (report §2.7/§2.8): job data, no credit can be spent by
+    // any of these. `projectId` is optional: without it the extension uses the work tab project.
+    const q = url.searchParams.get('projectId') ?? undefined;
+    if (req.method === 'GET' && path === '/entities') return callExtension('entities', { projectId: q });
+    if (req.method === 'GET' && path === '/entities/export') return callExtension('entityExport', { projectId: q });
+    if (req.method === 'POST' && path === '/entities') {
+      const body = await readJson(req);
+      return callExtension('entityUpsert', { projectId: body.projectId ?? q, entity: body.entity, });
+    }
+    if (req.method === 'POST' && path === '/prompts') {
+      const body = await readJson(req);
+      return callExtension('composePrompt', { projectId: body.projectId ?? q, spec: body.spec ?? {} });
+    }
+    const ENTITY_ACTIONS = {
+      approve: 'entityApprove', unapprove: 'entityUnapprove', ref: 'entityAddRef', supersede: 'entitySupersede',
+      remove: 'entityRemove', style: 'entitySetStyle', import: 'entityImport', restore: 'entityRestore',
+    };
+    let m = /^\/entities\/([\w-]+)$/.exec(path);
+    if (req.method === 'POST' && m && ENTITY_ACTIONS[m[1]]) {
+      const body = await readJson(req);
+      return callExtension(ENTITY_ACTIONS[m[1]], { ...body, projectId: body.projectId ?? q ?? undefined });
+    }
+
+    let j = /^\/jobs\/([\w-]+)$/.exec(path);
+    if (req.method === 'GET' && j) {
+      const job = (await callExtension('status')).jobs?.find((x) => x.id === j[1]);
+      if (!job) throw new HttpError(404, `No job ${j[1]}`);
       return job;
     }
-    m = /^\/jobs\/([\w-]+)\/([\w-]+)$/.exec(path);
-    if (req.method === 'POST' && m && JOB_ACTIONS[m[2]]) return callExtension(JOB_ACTIONS[m[2]], { id: m[1] });
+    j = /^\/jobs\/([\w-]+)\/([\w-]+)$/.exec(path);
+    if (req.method === 'POST' && j && JOB_ACTIONS[j[2]]) return callExtension(JOB_ACTIONS[j[2]], { id: j[1] });
     throw new HttpError(404, `No such endpoint: ${req.method} ${path}`);
   }
 

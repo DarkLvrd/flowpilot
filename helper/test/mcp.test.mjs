@@ -37,6 +37,10 @@ function fakeClient() {
     job: async (id) => ({ id, state: 'rendering' }),
     add: async (spec) => { calls.push(['add', spec]); return { id: 'j1', state: 'queued', expectedCost: 4 }; },
     act: async (id, action) => { calls.push([action, id]); if (id === 'bad') throw new Error('Cannot approve a job that is done'); return { id, state: 'approved' }; },
+    entities: async (projectId) => { calls.push(['entities', projectId]); return { projectId: projectId ?? 'p1', library: { entities: [{ name: 'Rudy' }] }, warnings: [] }; },
+    entityUpsert: async (projectId, entity) => { calls.push(['entityUpsert', projectId, entity]); return { id: 'ent_1', ...entity, version: 1, approvedAt: null }; },
+    entityAct: async (action, body) => { calls.push([action, body]); return { id: 'ent_1', name: body.name ?? 'Rudy' }; },
+    composePrompt: async (projectId, spec) => { calls.push(['composePrompt', projectId, spec]); return { projectId: projectId ?? 'p1', text: 'x\n\nCHARACTER — RUDY (identical in every shot): a man', parts: [], entities: [{ name: 'Rudy' }] }; },
   };
 }
 
@@ -48,7 +52,7 @@ test('initializes and lists the Flow Pilot tools; none can set the cap or clear 
   s.notify('notifications/initialized');
   const { result: { tools } } = await s.call('tools/list', {});
   const names = tools.map((t) => t.name);
-  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']);
+  assert.deepEqual(names.sort(), ['flowpilot_add_job', 'flowpilot_approve', 'flowpilot_cancel', 'flowpilot_compose_prompt', 'flowpilot_entity_approve', 'flowpilot_entity_list', 'flowpilot_entity_supersede', 'flowpilot_entity_upsert', 'flowpilot_job', 'flowpilot_requeue', 'flowpilot_retry_download', 'flowpilot_status']);
   for (const t of tools) assert.equal(t.inputSchema.type, 'object');
   assert.ok(!names.some((n) => /cap|halt|tab/.test(n)));
   await s.end();
@@ -86,5 +90,42 @@ test('tools call the helper and return its answer as JSON text; failures are too
   assert.equal((await s.call('tools/call', { name: 'flowpilot_set_cap', arguments: {} })).error.code, -32602);
   assert.equal((await s.call('resources/list', {})).error.code, -32601);
   assert.deepEqual((await s.call('ping', {})).result, {});
+  await s.end();
+});
+
+test('the entity tools list, upsert, approve (and un-approve) and supersede a locked reference', async () => {
+  const client = fakeClient();
+  const s = session(client);
+  await s.call('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+
+  const listed = await s.call('tools/call', { name: 'flowpilot_entity_list', arguments: { projectId: 'p1' } });
+  assert.equal(JSON.parse(listed.result.content[0].text).library.entities[0].name, 'Rudy');
+  assert.deepEqual(client.calls.at(-1), ['entities', 'p1']);
+
+  const upserted = await s.call('tools/call', { name: 'flowpilot_entity_upsert', arguments: { projectId: 'p1', kind: 'character', name: 'Rudy', description: 'a heavyset man', refs: [{ mediaId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'rudy_sheet_v1' }] } });
+  assert.equal(upserted.result.isError, false, JSON.stringify(upserted.result));
+  assert.deepEqual(client.calls.at(-1), ['entityUpsert', 'p1', { projectId: undefined, kind: 'character', name: 'Rudy', description: 'a heavyset man', refs: [{ mediaId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'rudy_sheet_v1' }], approve: false }]);
+
+  await s.call('tools/call', { name: 'flowpilot_entity_approve', arguments: { projectId: 'p1', name: 'Rudy' } });
+  assert.deepEqual(client.calls.at(-1), ['approve', { projectId: 'p1', name: 'Rudy' }]);
+  await s.call('tools/call', { name: 'flowpilot_entity_approve', arguments: { projectId: 'p1', name: 'Rudy', approve: false, reason: 'bad ref' } });
+  assert.deepEqual(client.calls.at(-1), ['unapprove', { projectId: 'p1', name: 'Rudy', reason: 'bad ref' }]);
+  await s.call('tools/call', { name: 'flowpilot_entity_supersede', arguments: { projectId: 'p1', name: 'Rudy', ref: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', reason: 'flat bronze' } });
+  assert.deepEqual(client.calls.at(-1), ['supersede', { projectId: 'p1', name: 'Rudy', ref: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', reason: 'flat bronze' }]);
+  await s.end();
+});
+
+test('flowpilot_compose_prompt previews the text, and add_job advertises entities', async () => {
+  const client = fakeClient();
+  const s = session(client);
+  await s.call('initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+
+  const addTool = (await s.call('tools/list', {})).result.tools.find((t) => t.name === 'flowpilot_add_job');
+  assert.ok(addTool.inputSchema.properties.entities, 'add_job advertises entities');
+
+  const composed = await s.call('tools/call', { name: 'flowpilot_compose_prompt', arguments: { projectId: 'p1', prompt: 'she turns', entities: ['Rudy'], durationS: 4 } });
+  assert.equal(composed.result.isError, false);
+  assert.match(composed.result.content[0].text, /CHARACTER — RUDY/);
+  assert.deepEqual(client.calls.at(-1), ['composePrompt', 'p1', { projectId: undefined, prompt: 'she turns', entities: ['Rudy'], durationS: 4 }]);
   await s.end();
 });

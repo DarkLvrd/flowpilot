@@ -1,10 +1,13 @@
 // `flowpilot` command line. Exit codes: 0 ok, 1 failed, 2 usage error.
 
 import { parseArgs } from 'node:util';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createKeyring } from './keys.js';
 import { createPin } from './pin.js';
 import { createHelper } from './server.js';
 import { createClient, paths, readKey, saveKey } from './client.js';
+import { describeSourcePhoto, normalizeRef } from './entities-file.js';
+import { entityBlock, promptBaseHash } from '../../extension/lib/entities.js';
 
 const USAGE = `Usage: flowpilot <command>
 
@@ -20,6 +23,23 @@ const USAGE = `Usage: flowpilot <command>
       [--first-frame REF]       Frames: the start photo (media id or absolute image path)
       [--last-frame REF]        Frames: the end photo; the video is generated in between
   approve|cancel|requeue|retry-download <id>
+
+  entity add --project P --kind character --name Rudy --desc-file block.txt
+             [--negative-file neg.txt] [--alias A ...] [--orientation portrait]
+             [--ref <mediaId> ...]   locked Flow media ids only (a path would be a new subject)
+             [--source-photo /abs/photo.jpg]  provenance for a dropped photo: name + sha256 only
+  entity list|show --project P [--name Rudy] [--json]
+  entity set --project P --name Rudy [--desc-file f] [--negative-file f] [--alias A ...]
+  entity approve|unapprove --project P --name Rudy [--reason R]
+  entity ref --project P --name Rudy --ref <mediaId> [--role sheet] [--label rudy_sheet_v1]
+  entity supersede --project P --name Rudy --ref <mediaId> --reason "flat bronze"
+  entity remove --project P --name Rudy
+  entity style --project P              Use the canonical style lock as this project's style entity
+  entity export --project P [--file out.json] | entity import --project P --file lib.json [--replace]
+  entity restore --project P [--replace]  Pull the helper's mirrored copy back after a reinstall
+  prompts <jobId> [--json]              The composed prompt parts and hashes (dry run, no spend)
+  compose --prompt TEXT [--entity NAME ...] [--project P] [--audio A] [--json]
+                                        Compose a prompt without queueing anything
   doctor                    Check the setup
   install-claude [--config PATH]
                             Add (or update) the Flow Pilot server in your Claude Desktop config,
@@ -36,6 +56,13 @@ const OPTIONS = {
   'forget-extension': { type: 'boolean' },
   config: { type: 'string' },
   ref: { type: 'string', multiple: true }, 'first-frame': { type: 'string' }, 'last-frame': { type: 'string' },
+  // Entities (report §2.7)
+  'desc-file': { type: 'string' }, description: { type: 'string' },
+  'negative-file': { type: 'string' }, negative: { type: 'string' },
+  alias: { type: 'string', multiple: true }, orientation: { type: 'string' },
+  'source-photo': { type: 'string' }, role: { type: 'string' }, label: { type: 'string' },
+  reason: { type: 'string' }, file: { type: 'string' }, replace: { type: 'boolean' },
+  entity: { type: 'string', multiple: true }, audio: { type: 'string' },
 };
 
 class Usage extends Error {}
@@ -84,6 +111,21 @@ export async function main(argv, { env = process.env, out = console.log, err = c
       }
       case 'approve': case 'cancel': case 'requeue': case 'retry-download':
         needKey(); print(await client().act(id(), cmd), formatJob); return 0;
+      case 'entity': return await entityCommand(rest, o, { client: client(), needKey, out, print });
+      case 'prompts': {
+        needKey();
+        const job = await client().job(id());
+        if (!job.promptParts?.length) throw new Error(`Job ${job.id} was queued without entities, so it has no composed parts; its prompt is what was typed`);
+        print({ id: job.id, prompt: job.prompt, parts: job.promptParts }, (v) => formatPrompt(v));
+        return 0;
+      }
+      case 'compose': {
+        if (!o.prompt) throw new Usage('compose needs --prompt');
+        needKey();
+        const composed = await client().composePrompt(o.project, { prompt: o.prompt, entities: o.entity ?? [], audio: o.audio });
+        print(composed, formatPrompt);
+        return 0;
+      }
       case 'doctor': return await doctor(p, client(), out, { env, probeMcp, config: o.config });
       default: throw new Usage(`Unknown command: ${cmd}`);
     }
@@ -109,6 +151,13 @@ async function mcp(p, env, err, { input, output } = {}) {
     job: (id) => withHelper(() => real.job(id)),
     add: (spec) => withHelper(() => real.add(spec)),
     act: (id, action) => withHelper(() => real.act(id, action)),
+    // The entity library and the prompt composer (report §2.7) are part of the same job-data
+    // surface: the MCP wrapper forwards them so Claude Desktop gets them like any other agent.
+    entities: (projectId) => withHelper(() => real.entities(projectId)),
+    entityUpsert: (projectId, entity) => withHelper(() => real.entityUpsert(projectId, entity)),
+    entityAct: (action, body) => withHelper(() => real.entityAct(action, body)),
+    entityExport: (projectId) => withHelper(() => real.entityExport(projectId)),
+    composePrompt: (projectId, spec) => withHelper(() => real.composePrompt(projectId, spec)),
   };
   const onSignal = () => { helper.stopNow(); process.exit(0); };
   process.once('SIGINT', onSignal);
@@ -229,3 +278,125 @@ function formatJob(j) {
   const extra = j.file?.path ? ` → ${j.file.path}` : j.error ? ` (${j.error})` : '';
   return `${j.id}  ${(j.state ?? '').padEnd(11)} ${j.name ?? ''}${extra}`;
 }
+
+// ---- Entities and prompt preview (report §2.7) -----------------------------------------------
+
+const readText = (path) => readFileSync(path, 'utf8').trim();
+
+async function entityCommand(rest, o, { client, needKey, out, print }) {
+  const [sub] = rest;
+  const project = o.project;
+  const act = (action, body) => client.entityAct(action, { projectId: project, ...body });
+  switch (sub) {
+    case 'add': case 'set': {
+      if (!o.name) throw new Usage(`entity ${sub} needs --name`);
+      needKey();
+      const entity = { name: o.name };
+      if (o.kind) entity.kind = o.kind;
+      const description = o['desc-file'] ? readText(o['desc-file']) : o.description;
+      if (description != null) entity.description = description;
+      const negative = o['negative-file'] ? readText(o['negative-file']) : o.negative;
+      if (negative != null) entity.negative = negative;
+      if (o.alias?.length) entity.aliases = o.alias;
+      if (o.orientation) entity.orientation = o.orientation;
+      // A locked ref is a Flow media id; --role/--label describe it (with several --ref values, add
+      // the rest with `entity ref`).
+      if (o.ref?.length) entity.refs = o.ref.map((r) => normalizeRef(o.ref.length === 1 ? { mediaId: r, role: o.role, label: o.label } : r));
+      if (o['source-photo']) entity.sourcePhoto = describeSourcePhoto(o['source-photo']);
+      if (sub === 'add' && !entity.description) throw new Usage('entity add needs --desc-file or --description (the canonical block inserted verbatim)');
+      if (sub === 'add' && !entity.kind) throw new Usage('entity add needs --kind character|product|vehicle|location|style');
+      print(await client.entityUpsert(project, entity), formatEntity);
+      return 0;
+    }
+    case 'list': case 'show': {
+      needKey();
+      const { library, template, warnings } = await client.entities(project);
+      if (sub === 'list') { print({ ...library, warnings }, formatLibrary); return 0; }
+      if (!o.name) throw new Usage('entity show needs --name');
+      const wanted = o.name.trim().toLowerCase();
+      const found = library.entities.find((e) => e.name.trim().toLowerCase() === wanted || e.id === o.name);
+      if (!found) throw new Error(`Unknown entity "${o.name}" in project ${library.projectId}`);
+      print(found, (e) => formatEntity(e, template));
+      return 0;
+    }
+    case 'approve': needKey(); print(await act('approve', { name: o.name }), formatEntity); return 0;
+    case 'unapprove': needKey(); print(await act('unapprove', { name: o.name, reason: o.reason }), formatEntity); return 0;
+    case 'ref': {
+      needKey();
+      if ((o.ref?.length ?? 0) !== 1) throw new Usage('entity ref needs exactly one --ref <mediaId>');
+      const ref = normalizeRef({ mediaId: o.ref[0], role: o.role, label: o.label });
+      print(await act('ref', { name: o.name, ref, reason: o.reason }), formatEntity);
+      return 0;
+    }
+    case 'supersede': {
+      needKey();
+      if ((o.ref?.length ?? 0) !== 1) throw new Usage('entity supersede needs exactly one --ref <mediaId>');
+      print(await act('supersede', { name: o.name, ref: o.ref[0], reason: o.reason }), formatEntity);
+      return 0;
+    }
+    case 'remove': needKey(); print(await act('remove', { name: o.name }), formatEntity); return 0;
+    case 'style': needKey(); print(await act('style', { name: o.name }), formatEntity); return 0;
+    case 'export': {
+      needKey();
+      const library = await client.entityExport(project);
+      if (o.file) { writeFileSync(o.file, `${JSON.stringify(library, null, 2)}\n`); out(`Exported ${library.entities.length} entities to ${o.file}`); return 0; }
+      print(library, formatLibrary);
+      return 0;
+    }
+    case 'import': {
+      needKey();
+      if (!o.file) throw new Usage('entity import needs --file <library.json>');
+      const library = JSON.parse(readFileSync(o.file, 'utf8'));
+      const mode = o.replace ? 'replace' : 'merge';
+      const value = await act('import', { library, mode });
+      print({ mode, library: value }, (v) => `Imported (${v.mode}): ${formatLibrary({ ...v.library, warnings: [] })}`);
+      return 0;
+    }
+    case 'restore': {
+      needKey();
+      const mode = o.replace ? 'replace' : 'merge';
+      const value = await act('restore', { mode });
+      print(value, (v) => `Restored (${v.mode}) from the helper's mirror: ${formatLibrary({ ...v.library, warnings: [] })}`);
+      return 0;
+    }
+    default:
+      throw new Usage(`Unknown entity command: ${sub ?? ''}`);
+  }
+}
+
+function formatLibrary({ projectId, styleId = null, entities = [], warnings = [] }) {
+  const lines = [`Project ${projectId ?? '(work tab)'} · ${entities.length} entities${styleId ? ` · style: ${entities.find((e) => e.id === styleId)?.name ?? styleId}` : ' · no style entity'}`];
+  for (const e of entities) lines.push(`  ${e.approvedAt ? '✅' : '🟡'} ${e.name} (${e.kind}, v${e.version})${e.refs?.length ? ` · refs: ${e.refs.map((r) => r.label ?? r.mediaId).join(', ')}` : ' · no locked ref'}`);
+  if (!entities.length) lines.push('  (none yet: `flowpilot entity add --help` to make one)');
+  for (const w of warnings) lines.push(`  ⚠️ ${w}`);
+  return lines.join('\n');
+}
+
+function formatEntity(e, template) {
+  if (!e) return '';
+  const lines = [
+    `${e.approvedAt ? '✅ approved' : '🟡 not approved'} · ${e.name} (${e.kind}, v${e.version})${e.aliases?.length ? ` · aliases: ${e.aliases.join(', ')}` : ''}`,
+    `id: ${e.id}${e.primaryRefMediaId ? ` · primary ref: ${e.primaryRefMediaId}` : ''}`,
+    '',
+    e.description,
+  ];
+  if (e.negative) lines.push('', `Negative: ${e.negative}`);
+  for (const r of e.refs ?? []) lines.push(`ref ${r.role ?? 'ref'} ${r.mediaId}${r.label ? ` (${r.label})` : ''}`);
+  if (e.sourcePhoto) lines.push(`source photo: ${e.sourcePhoto.path ?? e.sourcePhoto.name} (sha256 ${String(e.sourcePhoto.sha256).slice(0, 12)}…)`);
+  lines.push(`prompt block: ${entityBlock(e).text}`);
+  for (const h of e.history ?? []) lines.push(`  v${h.version} superseded ${h.supersededAt ? new Date(h.supersededAt).toISOString() : ''}: ${h.reason ?? ''}`);
+  if (template) lines.push(`template: ${template.sections?.join(' → ')}`);
+  return lines.join('\n');
+}
+
+function formatPrompt({ id = null, prompt, text, parts = [], sha256 = null }) {
+  const lines = [id ? `Job ${id}` : 'Composed prompt', `base hash: ${promptBaseHash(parts)}`, ''];
+  for (const p of parts) {
+    const preview = p.text.replace(/\s+/g, ' ').slice(0, 80);
+    lines.push(`${p.kind.padEnd(11)} ${String(p.ref).padEnd(24)} ${p.sha256.slice(0, 12)}…  ${preview}${p.text.length > 80 ? '…' : ''}`);
+  }
+  lines.push('', '--- what Flow will receive -------------------------------------------------', text ?? prompt);
+  if (sha256) lines.push('', `prompt sha256: ${sha256}`);
+  return lines.join('\n');
+}
+

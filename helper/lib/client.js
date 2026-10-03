@@ -50,5 +50,13 @@ export function createClient({ port, key }) {
     add: (spec) => call('POST', '/jobs', { spec }),
     // action: approve | cancel | requeue | retry-download
     act: (id, action) => call('POST', `/jobs/${encodeURIComponent(id)}/${action}`),
+
+    // ---- Entities and prompt composition (report §2.7). Nothing here can spend credits.
+    entities: (projectId) => call('GET', `/entities${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    entityUpsert: (projectId, entity) => call('POST', '/entities', { projectId, entity }),
+    // action: approve | unapprove | ref | supersede | remove | style | import | restore
+    entityAct: (action, body) => call('POST', `/entities/${action}`, body),
+    entityExport: (projectId) => call('GET', `/entities/export${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
+    composePrompt: (projectId, spec) => call('POST', '/prompts', { projectId, spec }),
   };
 }

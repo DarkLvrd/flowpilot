@@ -23,7 +23,7 @@ const TOOLS = [
   },
   {
     name: 'flowpilot_add_job',
-    description: 'Queue a Google Flow generation. It waits as "queued" until approved, then runs from the work tab; the result is saved to Downloads/FlowPilot or to outputPath. For face-matched character work, add reference photos: Ingredients (refs) shape the whole video, or Frames (firstFrame + optional lastFrame) generate the video between a start and end photo. Returns the job with its expected credit cost.',
+    description: 'Queue a Google Flow generation. It waits as "queued" until approved, then runs from the work tab; the result is saved to Downloads/FlowPilot or to outputPath. For face-matched character work, add reference photos: Ingredients (refs) shape the whole video, or Frames (firstFrame + optional lastFrame) generate the video between a start and end photo. Name the project\'s approved entities in `entities` to have their canonical blocks, the style lock and the merged negatives composed into the prompt verbatim (flowpilot_compose_prompt previews the exact text). Returns the job with its expected credit cost.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -38,6 +38,8 @@ const TOOLS = [
         firstFrame: { type: 'string', description: 'Frames: the start photo (a Flow media id or an absolute image path).' },
         lastFrame: { type: 'string', description: 'Frames: the end photo; the video is generated between firstFrame and lastFrame. Needs firstFrame.' },
         projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' },
+        entities: { type: 'array', items: { type: 'string' }, description: 'Approved entity names or ids from the project library; their canonical blocks are composed into the prompt verbatim' },
+        audio: { type: 'string', description: 'SFX/ambience tail for the composed prompt (only used with entities)' },
         outputPath: { type: 'string', description: 'Absolute path for the result (.mp4 for video; .png/.jpg/.webp for image). Never overwrites.' },
       },
       required: ['prompt'],
@@ -49,6 +51,71 @@ const TOOLS = [
   { name: 'flowpilot_cancel', description: 'Cancel a queued, approved or halted job.', inputSchema: id, run: (c, a) => c.act(need(a, 'id'), 'cancel') },
   { name: 'flowpilot_requeue', description: 'Queue a failed job again; only allowed if it was never clicked.', inputSchema: id, run: (c, a) => c.act(need(a, 'id'), 'requeue') },
   { name: 'flowpilot_retry_download', description: 'Download a failed job\'s finished result again; never generates again.', inputSchema: id, run: (c, a) => c.act(need(a, 'id'), 'retry-download') },
+
+  // ---- Entity library and prompt composition (report §2.7). Job data: allowed for agents, and
+  // none of it can spend credits. The cap, the halt and the work tab stay dashboard-only.
+  {
+    name: 'flowpilot_entity_list',
+    description: 'The project\'s consistency library: every entity (character, vehicle, product, location, style) with its kind, version, approval, locked reference media ids and the canonical text block, plus the project template and library warnings. Entities are per Flow project; a character used in two projects needs a second library.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' } }, additionalProperties: false },
+    run: (c, a) => c.entities(a.projectId),
+  },
+  {
+    name: 'flowpilot_entity_upsert',
+    description: 'Create or update (as a new version) a consistency entity in a project\'s library. The description is the canonical block inserted verbatim into every prompt that uses the entity. A reference must be a locked Flow media id (a local path is not a locked reference: uploading it again would be a new subject). New entities start unapproved; approve before using them in a job.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Flow project id; defaults to the work tab project' },
+        name: { type: 'string', description: 'Entity name, e.g. Rudy' },
+        kind: { type: 'string', enum: ['character', 'product', 'vehicle', 'location', 'style'] },
+        description: { type: 'string', description: 'The canonical block, verbatim (e.g. "CHARACTER — RUDY …")' },
+        negative: { type: 'string', description: 'Comma-separated negatives merged into the prompt\'s Negative: line' },
+        aliases: { type: 'array', items: { type: 'string' } },
+        orientation: { type: 'string', enum: ['portrait', 'landscape', 'square', 'none'] },
+        refs: { type: 'array', items: { type: 'object', properties: { mediaId: { type: 'string' }, role: { type: 'string' }, label: { type: 'string' } }, required: ['mediaId'], additionalProperties: false }, description: 'Locked Flow media ids with a unique label per project' },
+        approve: { type: 'boolean', description: 'Approve it in the same call' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    run: (c, a) => c.entityUpsert(a.projectId, { ...a, projectId: undefined, approve: a.approve === true }),
+  },
+  {
+    name: 'flowpilot_entity_approve',
+    description: 'Approve (or with approve:false, un-approve) an entity so jobs may use it. An unapproved entity is refused by the composer, so nothing can be composed around a subject the person has not seen.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, name: { type: 'string' }, approve: { type: 'boolean' }, reason: { type: 'string' } }, required: ['name'], additionalProperties: false },
+    run: (c, a) => (a.approve === false
+      ? c.entityAct('unapprove', { projectId: a.projectId, name: a.name, reason: a.reason })
+      : c.entityAct('approve', { projectId: a.projectId, name: a.name })),
+  },
+  {
+    name: 'flowpilot_entity_supersede',
+    description: 'Replace one locked reference of an entity (e.g. after a QC failure the flat-bronze fix): a new version is created, the old set lands in history with the reason, and nothing is edited in place.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string' }, name: { type: 'string' }, ref: { type: 'string', description: 'The media id to drop' }, reason: { type: 'string', description: 'Why it is being replaced, e.g. "flat bronze rear half"' } }, required: ['name', 'ref'], additionalProperties: false },
+    run: (c, a) => c.entityAct('supersede', { projectId: a.projectId, name: a.name, ref: a.ref, reason: a.reason }),
+  },
+  {
+    name: 'flowpilot_compose_prompt',
+    description: 'Compose, without queueing anything, the exact prompt Flow would receive for a shot or a plain job: the base text (verbatim), one canonical block per named entity, the project style lock, and the merged Negative: line — each with its sha256. Use it to check the text before any credits move. Unknown or unapproved entities are refused.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        prompt: { type: 'string', description: 'The base prompt text, written first and verbatim' },
+        entities: { type: 'array', items: { type: 'string' }, description: 'Entity names or ids, in the order their blocks should appear' },
+        scene: { type: ['integer', 'string'], description: 'Shot number, for the [SHOT n — Ns] header' },
+        durationS: { type: 'integer', enum: [4, 6, 8, 10] },
+        beat: { type: 'string' }, action: { type: 'string' },
+        motion: { type: 'string', description: 'Motion ids joined with + (e.g. anticipation+timing-weight) or a ready motion line' },
+        setting: { type: 'string' },
+        camera: { type: 'object', properties: { shotType: { type: 'string' }, moveId: { type: 'string' }, note: { type: 'string' } }, additionalProperties: false },
+        audio: { type: 'string', description: 'SFX/ambience tail; the template adds "— no music, no narration"' },
+      },
+      additionalProperties: false,
+    },
+    run: (c, a) => c.composePrompt(a.projectId, { ...a, projectId: undefined }),
+  },
 ];
 
 function need(args, key) {
@@ -108,7 +175,7 @@ export function runMcp({ client, input = process.stdin, output = process.stdout 
           protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[0],
           capabilities: { tools: {} },
           serverInfo: { name: 'flowpilot', version: '0.1.0' },
-          instructions: 'Queue Google Flow image/video jobs. Add a job, approve it, then poll flowpilot_job until done; the saved file path is in job.file.path. Credit cap and halts are set by the person in the dashboard.',
+          instructions: 'Queue Google Flow image/video jobs. Add a job, approve it, then poll flowpilot_job until done; the saved file path is in job.file.path. Credit cap and halts are set by the person in the dashboard. For consistent characters, vehicles and locations across clips, keep the project\'s entity library (flowpilot_entity_list) and name approved entities in flowpilot_add_job; flowpilot_compose_prompt shows the exact prompt first.',
         };
       }
       case 'ping': return {};
