@@ -54,8 +54,8 @@ is overlaid on Flow's own page.
   button, the **Session credit cap** (set or raise it here; nothing is submitted past it), a **Batch
   / storyboard import** section, an **Add a job** form (name, prompt, **Preview first**, kind
   image/video, resolution, duration, aspect, count, and references — Ingredients or Frames, below),
-  the **Entities** panel (the consistency library, below), the **Shots** panel and the **Queue**
-  table.
+  the **Entities** panel (the consistency library, below), the **Shots** panel, the **Review** panel
+  (the QC loop on finished clips, below) and the **Queue** table.
 - **Entities** — the per-project consistency library: drop in a photo or paste a locked Flow media
   id, give the subject a name and a description, and **Approve** it. Every job whose prompt was
   composed from the library then shows "Uses: Rudy" and a **Preview prompt** button with the exact
@@ -69,6 +69,14 @@ is overlaid on Flow's own page.
   cap). **Queue a new still** supersedes the old approval first, so an approved still is never
   silently replaced and a regenerated one is visibly new. See
   [Consistency](#consistency-characters-vehicles-and-locations).
+- **Review (the QC loop)** — each finished clip gets a card in the **Review** panel: six checks,
+  with `technical` already ticked from the job and the other five waiting for you (pass/fail picks +
+  a note). **Record verdict** writes the design's QC record on the job — metadata only, nothing
+  spends. Every failure then gets a **Fix** button naming the action and its cost: a still fix
+  queues a free still (which supersedes the approval, so the video follows only after you approve
+  it), a video-only fix queues a new video from the still that is already approved. Nothing
+  regenerates on its own, no base prompt or approved still is rewritten, and the failed take stays
+  on disk. See [Consistency](#consistency-characters-vehicles-and-locations) and `flowpilot qc`.
 - **Approvals** — each queued job shows an **Approve** button; jobs wait as `queued` until approved,
   then run from the work tab. Queued/approved/halted jobs can be **Cancel**led; a failed job that
   was never clicked can be **Re-queue**d, and one whose render finished can **Retry download**.
@@ -222,11 +230,30 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
   whole import; an unapproved entity is a warning and is left out. `flowpilot shots list` shows each
   shot with its gate and the video cost; `flowpilot still <shotId>` (re)queues a still; `flowpilot
   anchor <shotId> [--media <id>]` approves a finished still and creates the video job.
-- **Not here yet** (later phases in the design): the QC review loop with append-only consistency
-  blocks (`flowpilot qc`, the Review panel), and attaching Flow's own `@Name` Characters through the
+- **The QC loop (Phase 3).** Every finished clip can be reviewed on six checks: `technical` (bytes,
+  duration bucket, resolution, aspect, non-empty, recipe vs settings) is **automatic**, read from the
+  job; `identity`, `wardrobe`, `location`, `artefacts` and `style` need eyes. Flow Pilot never
+  auto-approves or auto-fails a clip on a machine score: it **surfaces** the checks, **records** the
+  verdict and **offers** the fix. The verdict is the design's record — `checkedAt`, `by` (human or
+  agent), the six `checks`, the `verdict` and the `note` — written as job metadata exactly like a
+  job's references: no state change, no click, no spend.
+- **A fix is a click that appends, never a rewrite.** Every failure maps to one action in the
+  design's table, shown with its cost before you take it: a still fix (`identity`, `wardrobe`,
+  `location`) queues a **free still** — which supersedes the old approval, so the video comes only
+  after you approve the new one — and a video-only fix (`artefacts`, `style`) queues a **new video**
+  from the still that is already approved. `technical` offers nothing: that job failed its own byte
+  check before it was done. Nothing regenerates on its own, an approved still and an existing output
+  file are never overwritten, and the failed take stays on disk. The fix itself is an **appended
+  consistency block** (the studio's `car_consistency_block` pattern, and why the reviewer's note
+  becomes the block's text): sections 1-10 keep their hashes byte-identically, which is what makes a
+  fix auditable.
+- **Where you review it:** the dashboard's **Review** panel (one card per finished clip: the six
+  ticks, the verdict, the note, and a **Fix** button per recorded failure), `flowpilot qc <jobId>`
+  to read or record a verdict, and `flowpilot qc <jobId> --fix <check>` to take one.
+- **Not here yet** (the design's stretch): attaching Flow's own `@Name` Characters through the
   picker. An entity that carries `flowCharacter` is already text-prefixed (`@Name`) and its
-  description block left out of the composed prompt — the text half is wired, the attach is the
-  Phase 3 seam and nothing clicks it. Naming entities on a job composes the prompt; for the still's
+  description block left out of the composed prompt — the text half is wired, the attach stays an
+  unwired seam and nothing clicks it. Naming entities on a job composes the prompt; for the still's
   references the shot plan passes them itself.
 
 ## How agents use it
@@ -263,6 +290,11 @@ flowpilot shots list --project P       Each shot, its still gate and the video's
 flowpilot still <shotId> [--project P] (Re)queue the shot's still image job (0 credits today)
 flowpilot anchor <shotId> [--media MEDIA_ID] [--frame start|end] [--note TEXT] [--project P]
                                        Approve the still and create the video job (queued, not run)
+flowpilot qc <jobId> [--identity pass|fail ...] [--note TEXT] [--fix CHECK]
+                                       Review a finished clip: print its verdict and the fixes it
+                                       offers (with their cost), record a verdict with all five
+                                       visible checks (technical is automatic), or take one fix —
+                                       which queues the next job and never rewrites the base prompt
 flowpilot prompts <jobId>              the composed prompt parts and hashes (dry run)
 flowpilot compose --prompt TEXT [--entity NAME ...] [--project P] [--audio A]
 flowpilot doctor                       Check the setup
@@ -296,15 +328,17 @@ flowpilot add --prompt "a slow zoom in" --first-frame /Users/me/wide.png --last-
 `lastFrame` (Frames), each a Flow media id or an absolute image path — the same face-matched
 character work as the CLI above.
 
-`flowpilot mcp` runs an MCP server on stdio with fifteen tools: `flowpilot_status`, `flowpilot_job`,
+`flowpilot mcp` runs an MCP server on stdio with sixteen tools: `flowpilot_status`, `flowpilot_job`,
 `flowpilot_add_job` (which also takes `entities` — approved names from the project library, composed
 into the prompt verbatim), `flowpilot_approve`, `flowpilot_cancel`, `flowpilot_requeue`,
 `flowpilot_retry_download`, `flowpilot_entity_list`, `flowpilot_entity_upsert`,
 `flowpilot_entity_approve` (with `approve: false` to un-approve), `flowpilot_entity_supersede`,
 `flowpilot_compose_prompt` (the exact text Flow will receive, with per-part hashes),
 `flowpilot_shots` (each shot, its still gate and the video's cost), `flowpilot_import_shots` (queues
-one free still per row, never a video) and `flowpilot_anchor_still` (approve a finished still and
-create its video job). There is nothing for the cap, the halt or the work tab — those stay with the
+one free still per row, never a video), `flowpilot_anchor_still` (approve a finished still and
+create its video job) and `flowpilot_review` (read a finished clip's QC record with the fixes it
+offers and their cost, record a verdict with the five visible checks, or take one fix with
+`fix: "<check>"`). There is nothing for the cap, the halt or the work tab — those stay with the
 person in the dashboard.
 
 You do not have to start the helper first: on the first tool call the MCP server starts a helper of
@@ -334,6 +368,8 @@ The helper listens on `http://127.0.0.1:47615` only. All calls except `/health` 
 | `POST` | `/shots/import` | `{ projectId, text, filename }` — plan and queue one free still per row |
 | `POST` | `/shots/still` | `{ projectId, shotId }` — (re)queue a shot's still image job |
 | `POST` | `/shots/anchor` | `{ projectId, shotId, mediaId?, frame?, note? }` — approve the still, create the video job |
+| `POST` | `/jobs/<id>/qc` | `{ checks, note? }` — record a QC verdict on a finished clip (technical is computed by the extension) |
+| `POST` | `/jobs/<id>/qc-fix` | `{ check }` — queue the fix for one recorded failure (a free still, or a new video) |
 
 `FLOWPILOT_HOME` overrides `~/.flowpilot`; `FLOWPILOT_PORT` overrides the port.
 
@@ -360,7 +396,7 @@ when Claude exits.
    exactly what it added, and never touches your other MCP servers. If you keep Flow Pilot's files
    in a custom place, the installer copies `FLOWPILOT_HOME`/`FLOWPILOT_PORT` into the entry for you.
 
-2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's fifteen tools then appear in
+2. **Restart Claude Desktop** so it loads the new server. Flow Pilot's sixteen tools then appear in
    Claude's tools list.
 
 3. **Pair this machine once.** Open the Flow Pilot dashboard, click **Pair an agent**, copy the
@@ -374,7 +410,7 @@ when Claude exits.
    never your cookies or tokens.
 
 4. **Check it.** Run `node helper/bin/flowpilot.js doctor`. The helper, pairing, MCP server, its
-   fifteen tools and the Claude config should each show ✅.
+   sixteen tools and the Claude config should each show ✅.
 
 Then, in Claude Desktop, type something like:
 

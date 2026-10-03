@@ -184,3 +184,25 @@ and attaching it; no Generate, no credits. The composer was restored to the proj
 
 `www.google.com/recaptcha/enterprise.js` and its anchor iframe load on every project page;
 Flow mints its own tokens when Generate is clicked. Flow Pilot never calls or wraps them.
+
+## 2026-10-03 — Phase 3 (QC loop): what was verified, and what could not be
+
+Offline only; zero credits, nothing generated, nothing approved.
+
+- The whole QC loop is covered by tests with no browser: the failure policy's every row, the verdict
+  for one failure, several at once and none, the automatic `technical` check (a done clip passes;
+  a non-done job, a missing media id, missing file, wrong bytes and a drifted recipe fail), the
+  record's shape and validation, the append-only consistency block (base hashes byte-identical
+  before and after, twice over), the shot store's append, and the service-worker flow end to end
+  (record, a free-still fix, a video-only fix, a blocked machine-rejected clip, a plain clip's fix).
+- **No live check was run, and none can be honestly claimed.** The practice Chrome on port 9333 is
+  reachable and was read with `chrome-devtools-axi` (read-only, nothing clicked): its Flow tab is
+  `flow.google.com/project/78d6e0a5-3e82-4491-9f47-6755a6b4c173` and the Flow Pilot dashboard tab
+  and its service worker are both alive. `pages` exposes only the Flow tab, so the extension's own
+  storage cannot be read through that surface, and the two ways around it are forbidden: navigating
+  the work tab (it may be mid-job for another lane) or opening a new tab. The installed extension is
+  the primary checkout's build in any case, which has no QC record to read. So the *tracking* claim
+  rests on the fixture tests, not on a live record — said plainly rather than dressed up.
+- What a future read-only check would need: an extension page exposed to the devtools tool (or a
+  helper connected to the practice profile), then a `done` video job's record — `state`, `mediaId`,
+  `file.type`, `recipe`, `settings` — to confirm `technicalCheck` reads real records as expected.
