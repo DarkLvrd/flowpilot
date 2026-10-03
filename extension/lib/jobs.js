@@ -20,6 +20,8 @@
 // until a person presses Resume (report §9.2). The engine reads that flag; only `resume()` clears
 // it, and only the dashboard calls that.
 
+import { validateQcRecord } from './qc.js';
+
 const KEY = 'flowpilot';
 const TERMINAL = new Set(['done', 'failed', 'cancelled']);
 
@@ -164,6 +166,19 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
       return update((state) => {
         const i = find(state, id);
         state.jobs[i] = { ...state.jobs[i], references, updatedAt: now() };
+        return state.jobs[i];
+      });
+    },
+
+    // The QC verdict on a finished clip (report §2.6): job metadata, written exactly like
+    // `references` above — the state machine, its history and the spend never move. The record is
+    // validated here (the store is the only writer), and `technical` was computed from the job by
+    // the caller, never taken on trust from a person or an agent.
+    setQc(id, qc) {
+      return update((state) => {
+        validateQcRecord(qc);
+        const i = find(state, id);
+        state.jobs[i] = { ...state.jobs[i], qc, updatedAt: now() };
         return state.jobs[i];
       });
     },

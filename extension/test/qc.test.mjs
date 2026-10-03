@@ -4,8 +4,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   QC_CHECKS, QC_VISIBLE, QC_RESULTS, QC_VERDICTS, QC_POLICY, qcVerdict, policyFor,
-  technicalCheck, buildQcRecord, validateQcRecord, consistencyBlockFor, fixCostText,
+  technicalCheck, buildQcRecord, validateQcRecord, consistencyBlockFor, fixCostText, fixJobSpec,
+  jobPromptParts,
 } from '../lib/qc.js';
+import { appendConsistencyBlock } from '../lib/entities.js';
+import { sha256Hex } from '../lib/sha256.js';
 
 const MEDIA = 'bc92bce2-2183-4ab2-80f6-d5aead42857a';
 const MEDIA2 = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
@@ -203,4 +206,40 @@ test('a record is validated before it is stored: the design\'s five fields and n
   assert.throws(() => validateQcRecord(null), /record/i);
   // The stored record has exactly the design's fields.
   assert.deepEqual(Object.keys(good).sort(), ['by', 'checkedAt', 'checks', 'note', 'verdict']);
+});
+
+test('a fix for a clip that is not part of a shot is a new job from the same spec, never an edit', () => {
+  const base = { ...doneVideo(), name: 'scene_4', referencePlan: { input: 'frames', ingredients: [], firstFrame: { kind: 'mediaId', mediaId: MEDIA2 }, lastFrame: null }, references: { ingredients: [], firstFrame: MEDIA2, lastFrame: null } };
+  const parts = appendConsistencyBlock([{ kind: 'base', ref: 'prompt', sha256: 'a'.repeat(64), text: 'the car drives home' }], { id: 'artefacts_fix', text: 'No text, watermark or logo anywhere in frame.' });
+  // A video-only fix: the same frames and settings, the appended part, a fresh name.
+  const video = fixJobSpec(base, qcVerdict(withFail('artefacts')).actions[0], parts);
+  assert.equal(video.kind, 'video');
+  assert.equal(video.input, 'frames');
+  assert.equal(video.firstFrame, MEDIA2);
+  assert.equal(video.prompt, 'the car drives home\n\nNo text, watermark or logo anywhere in frame.');
+  assert.deepEqual(video.promptParts, parts);
+  assert.equal(video.name, 'scene_4-artefacts-fix');
+  assert.equal(video.resolution, '360p');
+  assert.equal(video.durationS, 4);
+  // A still fix asks for a free image job instead, carrying the same ingredients references.
+  const base2 = { ...base, references: { ingredients: [MEDIA, MEDIA2], firstFrame: null, lastFrame: null }, settings: { ...base.settings, input: 'ingredients', firstFrame: null, refs: [MEDIA] } };
+  const ident = fixJobSpec(base2, qcVerdict(withFail('identity')).actions[0], parts);
+  assert.equal(ident.kind, 'image');
+  assert.deepEqual(ident.refs, [MEDIA, MEDIA2]);
+  assert.equal(ident.firstFrame, undefined);
+  // The input job is untouched: the same object, no mutated arrays.
+  assert.equal(base.name, 'scene_4');
+  assert.equal(base.promptParts, undefined);
+});
+
+test('a plain job with no composed parts starts from its own prompt, byte-verbatim', () => {
+  const plain = { id: 'p1', name: 'plain', prompt: 'a red fox in snow', settings: { kind: 'video' } };
+  const parts = jobPromptParts(plain);
+  assert.deepEqual(parts, [{ kind: 'base', ref: 'prompt', sha256: sha256Hex('a red fox in snow'), text: 'a red fox in snow' }]);
+  const fixed = appendConsistencyBlock(parts, { id: 'style_fix', text: 'keep the 3D Pixar look' });
+  assert.equal(fixed.map((p) => p.text).join('\n\n'), 'a red fox in snow\n\nkeep the 3D Pixar look');
+  // A composed job keeps the parts it already has, untouched.
+  const composed = { prompt: 'x', promptParts: [{ kind: 'base', ref: 'prompt', sha256: 'b'.repeat(64), text: 'x' }] };
+  assert.deepEqual(jobPromptParts(composed), composed.promptParts);
+  assert.deepEqual(jobPromptParts({ prompt: '' }), []);
 });

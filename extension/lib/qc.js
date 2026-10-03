@@ -12,6 +12,7 @@
 // worker, the CLI, the MCP server and the dashboard all read the same table.
 
 import { recipeFor } from './catalog.js';
+import { sha256Hex } from './sha256.js';
 
 export const QC_CHECKS = ['technical', 'identity', 'wardrobe', 'location', 'artefacts', 'style'];
 // What a person (or an agent looking at frames) has to decide. `technical` is computed, never asked.
@@ -189,6 +190,57 @@ export function buildQcRecord({ job = {}, checks = {}, by = 'human', note = null
   for (const check of QC_VISIBLE) merged[check] = checks[check];
   const { verdict } = qcVerdict(merged, policy, { note });
   return { checkedAt: at, by, checks: merged, verdict, note: note == null ? null : String(note) };
+}
+
+// The parts a fix appends to. A job composed from the library already carries them; a plain job has
+// only its prompt text, which becomes the base part verbatim (kind "base", exactly what the composer
+// would have emitted), so a fix can never drop the text a person typed.
+export function jobPromptParts(job = {}) {
+  if (Array.isArray(job.promptParts) && job.promptParts.length) return job.promptParts;
+  const text = String(job.prompt ?? '');
+  return text ? [{ kind: 'base', ref: 'prompt', sha256: sha256Hex(text), text }] : [];
+}
+
+// The new job a fix creates for a clip that is NOT part of a shot. Same recipe, same references,
+// the appended parts, and a fresh name; `buildJob` (the one validation path) turns this into a job,
+// so a fix can never submit on weaker terms than a hand-added job. Pure; the input job is untouched.
+export function fixJobSpec(job = {}, action = {}, parts = [], { name = null } = {}) {
+  const settings = job.settings ?? {};
+  const references = job.references ?? {};
+  const plan = job.referencePlan ?? {};
+  const refs = referenceIds(job);
+  const spec = {
+    name: name ?? `${job.name ?? job.id ?? 'job'}-${action.check}-fix`,
+    kind: action.still ? 'image' : (settings.kind ?? 'video'),
+    prompt: parts.map((p) => p.text).join('\n\n'),
+    promptParts: parts,
+    ...(job.entities?.length ? { entities: job.entities } : {}),
+    ...(settings.resolution ? { resolution: settings.resolution } : {}),
+    ...(Number.isFinite(settings.durationS) ? { durationS: settings.durationS } : {}),
+    ...(settings.aspect ? { aspect: settings.aspect } : {}),
+    ...(settings.count ? { count: settings.count } : {}),
+  };
+  // A still takes Ingredients (photo references), never Frames; a video keeps the mode it ran in.
+  if (action.still) return refs.ingredients.length ? { ...spec, refs: refs.ingredients } : spec;
+  const input = settings.input === 'frames' ? 'frames' : (refs.ingredients.length ? 'ingredients' : (settings.input ?? 'text'));
+  return {
+    ...spec,
+    input,
+    ...(input === 'ingredients' ? { refs: refs.ingredients } : {}),
+    ...(input === 'frames' ? { firstFrame: refs.firstFrame ?? plan.firstFrame?.mediaId ?? null, lastFrame: refs.lastFrame ?? null } : {}),
+  };
+}
+
+// Media ids only: the resolved references a finished job already carries, falling back to the ones
+// the plan classified as media ids. Paths never reach a fix (they were uploaded once already).
+function referenceIds(job = {}) {
+  const resolved = job.references ?? {};
+  const plan = job.referencePlan ?? {};
+  const ids = (list) => (list ?? []).map((r) => (typeof r === 'string' ? r : r?.mediaId)).filter((v) => typeof v === 'string' && v !== '');
+  const ingredients = ids(resolved.ingredients?.length ? resolved.ingredients : plan.ingredients);
+  const firstFrame = resolved.firstFrame ?? plan.firstFrame?.mediaId ?? null;
+  const lastFrame = resolved.lastFrame ?? plan.lastFrame?.mediaId ?? null;
+  return { ingredients: [...new Set(ingredients)], firstFrame, lastFrame };
 }
 
 // The same validation the job store runs before writing a record, so a malformed verdict can never

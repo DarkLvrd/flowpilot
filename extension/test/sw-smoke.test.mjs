@@ -351,6 +351,176 @@ test('a hand-written job cannot claim a shot anchor; only approving a still can'
   assert.match(r.error, /anchor/i);
 });
 
+// ---- The QC loop (report §2.6, Phase 3) -------------------------------------------------------
+
+const VIDEO_MEDIA = '5a5a5a5a-1111-4111-8111-111111111111';
+
+// Puts a job the extension already queued into the state a finished clip would be in (the runner
+// downloads and byte-checks a video exactly like a still before `done`).
+const markVideoDone = (id) => {
+  data['flowpilot'].jobs = data['flowpilot'].jobs.map((j) => (j.id === id
+    ? { ...j, state: 'done', mediaId: VIDEO_MEDIA, file: { path: `FlowPilot/x/${id}.mp4`, type: 'mp4' }, references: { ingredients: [REF_MEDIA], firstFrame: null, lastFrame: null, names: {} } }
+    : j));
+};
+
+// A shot whose still is approved and whose video job has finished: the clip a Review card shows.
+const finishedClip = async (scene, mode = 'ingredients') => {
+  const added = await importOneShot({ scene, entities: ['ShotRudy'], mode });
+  markStillDone(added.stillJobId);
+  const video = (await send({ cmd: 'approveAnchor', shotId: added.shotId })).value.video;
+  markVideoDone(video.id);
+  return { shotId: added.shotId, stillJobId: added.stillJobId, video };
+};
+
+const PASS5 = { identity: 'pass', wardrobe: 'pass', location: 'pass', artefacts: 'pass', style: 'pass' };
+
+let reviewed; // the clip the fix tests work from, recorded once below
+
+test('a QC verdict is recorded on a finished clip as metadata, with technical computed not trusted', async () => {
+  reviewed = await finishedClip(11);
+  const r = await send({ cmd: 'qcSet', id: reviewed.video.id, checks: { ...PASS5, wardrobe: 'fail' }, note: 'rear half of the car went flat bronze after 2s' });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.value.qc.checks, { technical: 'pass', ...PASS5, wardrobe: 'fail' });
+  assert.equal(r.value.qc.verdict, 'regen');
+  assert.equal(r.value.qc.by, 'human');
+  assert.equal(r.value.qc.note, 'rear half of the car went flat bronze after 2s');
+  assert.equal(typeof r.value.qc.checkedAt, 'number');
+  assert.equal(r.value.state, 'done'); // written like `references`: no state change, no click, no spend
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+  // The verdict is derived from the checks: a caller cannot state a technical result that contradicts
+  // the job, and a clip the machine itself rejected is blocked rather than approved.
+  const contradict = await send({ cmd: 'qcSet', id: reviewed.video.id, checks: { ...PASS5, technical: 'fail' } });
+  assert.equal(contradict.ok, false);
+  assert.match(contradict.error, /automatic/);
+  const incomplete = await send({ cmd: 'qcSet', id: reviewed.video.id, checks: { identity: 'pass' } });
+  assert.equal(incomplete.ok, false);
+  assert.match(incomplete.error, /wardrobe/);
+  // A clip that has not finished has nothing to review yet.
+  const pending = (await send({ cmd: 'addJob', spec: { name: 'pending fox', prompt: 'a red fox', resolution: '360p', durationS: 4 } })).value;
+  const running = await send({ cmd: 'qcSet', id: pending.id, checks: PASS5 });
+  assert.equal(running.ok, false);
+  assert.match(running.error, /review|finished|done/i);
+});
+
+test('the technical check reads a machine-rejected clip as blocked, and no fix is offered', async () => {
+  const added = await importOneShot({ scene: 12, entities: ['ShotRudy'], mode: 'ingredients' });
+  markStillDone(added.stillJobId);
+  const video = (await send({ cmd: 'approveAnchor', shotId: added.shotId })).value.video;
+  markVideoDone(video.id);
+  data['flowpilot'].jobs = data['flowpilot'].jobs.map((j) => (j.id === video.id ? { ...j, file: { path: 'x.png', type: 'png' } } : j));
+  const r = await send({ cmd: 'qcSet', id: video.id, checks: PASS5 });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.qc.verdict, 'blocked');
+  assert.equal(r.value.qc.checks.technical, 'fail');
+  const fix = await send({ cmd: 'qcFix', id: video.id, check: 'technical' });
+  assert.equal(fix.ok, false);
+  assert.match(fix.error, /no fix|nothing to fix/i);
+});
+
+test('a video-only fix appends a block and makes a new video from the still already approved', async () => {
+  const clip = await finishedClip(13);
+  await send({ cmd: 'qcSet', id: clip.video.id, checks: { ...PASS5, artefacts: 'fail' }, note: 'a watermark appeared bottom-right' });
+  const before = (await send({ cmd: 'status' })).value.jobs.find((j) => j.id === clip.video.id);
+  const baseHash = before.promptParts.filter((p) => p.kind !== 'consistency').map((p) => p.sha256).join(',');
+  const r = await send({ cmd: 'qcFix', id: clip.video.id, check: 'artefacts' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.still, null); // a video-only fix needs no new still
+  assert.equal(r.value.video.state, 'queued');
+  assert.equal(r.value.video.expectedCost, 7); // the price shown before the fix is taken (720p r2v)
+  assert.notEqual(r.value.video.id, clip.video.id);
+  assert.equal(r.value.video.anchor.startFrameMediaId, STILL_MEDIA); // the same approved still, untouched
+  // The new video carries the appended block; the failed take is untouched on disk and in the record.
+  assert.equal(r.value.video.promptParts.at(-1).kind, 'consistency');
+  assert.equal(r.value.video.promptParts.at(-1).ref, 'artefacts_fix');
+  assert.equal(r.value.video.promptParts.at(-1).text, 'a watermark appeared bottom-right');
+  assert.equal(r.value.video.prompt.endsWith('a watermark appeared bottom-right'), true);
+  assert.deepEqual(r.value.video.promptParts.slice(0, before.promptParts.length).map((p) => p.sha256), before.promptParts.map((p) => p.sha256));
+  const after = (await send({ cmd: 'status' })).value.jobs.find((j) => j.id === clip.video.id);
+  assert.equal(after.file.path, before.file.path);
+  assert.deepEqual(after.promptParts, before.promptParts);
+  assert.equal(after.state, 'done'); // the failed take stays, on disk and in the queue
+  assert.equal((await send({ cmd: 'shots' })).value.shots.find((s) => s.id === clip.shotId).videoJob.id, r.value.video.id);
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0); // queued, not clicked
+  // The shot's own base parts are byte-identical: the fix only appended.
+  const shot = (await send({ cmd: 'shots' })).value.shots.find((s) => s.id === clip.shotId);
+  assert.equal(shot.promptParts.filter((p) => p.kind !== 'consistency').map((p) => p.sha256).join(','), baseHash);
+});
+
+test('a still fix queues a free still, supersedes the old approval, and still writes nothing by itself', async () => {
+  const clip = await finishedClip(14);
+  await send({ cmd: 'qcSet', id: clip.video.id, checks: { ...PASS5, wardrobe: 'fail' }, note: 'the jacket turned grey' });
+  const r = await send({ cmd: 'qcFix', id: clip.video.id, check: 'wardrobe' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.video, null); // the still comes first: no video exists until it is approved
+  assert.equal(r.value.still.expectedCost, 0); // a still is free
+  assert.equal(r.value.still.settings.kind, 'image');
+  assert.equal(r.value.still.promptParts.at(-1).text, 'the jacket turned grey');
+  const shot = (await send({ cmd: 'shots' })).value.shots.find((s) => s.id === clip.shotId);
+  assert.equal(shot.gate.ok, false); // the old approval was superseded, never carried forward
+  assert.equal(shot.still.jobId, r.value.still.id);
+  assert.equal(shot.videoJob.id, clip.video.id); // the old video row is untouched
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+  // With that new still finished, approving it builds a video that carries the fix.
+  markStillDone(r.value.still.id);
+  const anchored = await send({ cmd: 'approveAnchor', shotId: clip.shotId });
+  assert.equal(anchored.ok, true, anchored.error);
+  assert.equal(anchored.value.video.promptParts.at(-1).ref, 'wardrobe_fix');
+});
+
+test('a fix is refused when there is no verdict, no failure, or no fix to offer', async () => {
+  const clip = await finishedClip(15);
+  const noVerdict = await send({ cmd: 'qcFix', id: clip.video.id, check: 'identity' });
+  assert.equal(noVerdict.ok, false);
+  assert.match(noVerdict.error, /QC/i);
+  await send({ cmd: 'qcSet', id: clip.video.id, checks: PASS5 });
+  const notFailed = await send({ cmd: 'qcFix', id: clip.video.id, check: 'identity' });
+  assert.equal(notFailed.ok, false);
+  assert.match(notFailed.error, /not a failed check/i);
+  const unknown = await send({ cmd: 'qcFix', id: clip.video.id, check: 'vibes' });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /Unknown check/);
+});
+
+test('a fix for a clip that is not part of a shot makes a new job from the same spec', async () => {
+  const plain = (await send({ cmd: 'addJob', spec: { name: 'plain clip', prompt: 'a red fox in snow', kind: 'video', input: 'ingredients', refs: [REF_MEDIA], resolution: '360p', durationS: 4 } })).value;
+  markVideoDone(plain.id);
+  await send({ cmd: 'qcSet', id: plain.id, checks: { ...PASS5, style: 'fail' }, note: 'it drifted photoreal' });
+  const r = await send({ cmd: 'qcFix', id: plain.id, check: 'style' });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.value.video.settings.input, 'ingredients');
+  assert.deepEqual(r.value.video.referencePlan.ingredients, [{ kind: 'mediaId', mediaId: REF_MEDIA }]);
+  assert.equal(r.value.video.promptParts.at(-1).ref, 'style_fix');
+  assert.equal(r.value.video.prompt, 'a red fox in snow\n\nit drifted photoreal');
+  assert.equal((await send({ cmd: 'status' })).value.jobs.find((j) => j.id === plain.id).state, 'done');
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+  // A job that was never composed from the library has no parts: the base prompt is its own part,
+  // and the fix appends to it instead of replacing it.
+  // An identity failure asks for a free image job instead, with the same references.
+  await send({ cmd: 'qcSet', id: plain.id, checks: { ...PASS5, identity: 'fail' } });
+  const still = await send({ cmd: 'qcFix', id: plain.id, check: 'identity' });
+  assert.equal(still.ok, true, still.error);
+  assert.equal(still.value.still.settings.kind, 'image');
+  assert.equal(still.value.still.expectedCost, 0);
+  assert.equal(still.value.still.promptParts.at(-1).ref, 'identity_fix');
+});
+
+test('agents may record a verdict and take a fix: job data, never the cap, the halt or the work tab', async () => {
+  const clip = await finishedClip(16);
+  const agent = `${EXT}popup/popup.html`;
+  const recorded = await send({ cmd: 'qcSet', id: clip.video.id, checks: { ...PASS5, location: 'fail' } }, agent);
+  assert.equal(recorded.ok, true, recorded.error);
+  assert.equal(recorded.value.qc.by, 'agent');
+  const fixed = await send({ cmd: 'qcFix', id: clip.video.id, check: 'location' }, agent);
+  assert.equal(fixed.ok, true, fixed.error);
+  assert.equal(fixed.value.still.settings.kind, 'image');
+  assert.equal((await send({ cmd: 'setCap', cap: 10 }, agent)).ok, false); // still dashboard-only
+});
+
+test('the QC tests leave the entity library as they found it', async () => {
+  await send({ cmd: 'entityRemove', name: 'ShotRudy' });
+  assert.deepEqual((await send({ cmd: 'entities' })).value.library.entities, []);
+});
+
 // ---- Helper bridge ----------------------------------------------------------------------------
 
 const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));

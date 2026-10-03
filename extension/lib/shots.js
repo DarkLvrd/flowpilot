@@ -27,7 +27,7 @@
 
 import { buildJob } from './jobspec.js';
 import { classifyRef, MAX_INGREDIENTS } from './refs.js';
-import { composePrompt } from './entities.js';
+import { composePrompt, appendConsistencyBlock } from './entities.js';
 import { uniquify } from './naming.js';
 import { detectFormat, parseStoryboard, parseCsv } from './storyboard.js';
 
@@ -545,6 +545,24 @@ export function parseShotRows(text, { filename = '' } = {}) {
   throw new Error('Cannot tell whether this shot list is JSON or CSV; name the file .json or .csv, or start JSON with [ or {');
 }
 
+// ---- the shot's fix history: append a block, never rewrite the base (report §2.2, §2.6) --------
+
+// A QC fix appends one consistency block to the shot's composed prompt. The block is the only thing
+// that changes: sections 1-10 keep their hashes byte-identically (`appendConsistencyBlock` is
+// append-only), so the base prompt a person approved is provably the same text afterwards. Pure —
+// the shot passed in is untouched.
+export function shotWithConsistencyBlock(shot, block, { reason = null, at = Date.now() } = {}) {
+  validateShot(shot);
+  const parts = appendConsistencyBlock(shot.promptParts ?? [], block);
+  const appended = parts.at(-1);
+  return {
+    ...shot,
+    prompt: parts.map((p) => p.text).join('\n\n'),
+    promptParts: parts,
+    history: [...(shot.history ?? []), { at, reason: reason ?? `consistency block ${appended.ref} appended`, ref: appended.ref, sha256: appended.sha256 }],
+  };
+}
+
 // ---- the store -----------------------------------------------------------------------------
 
 // `area` has the chrome.storage.local contract. Every write is serialized and validated, like
@@ -624,6 +642,16 @@ export function createShotStore(area, { now = () => Date.now(), onChange = () =>
         project.shots[i] = result.shot;
         project.approvals = result.approvals;
         return result.shot;
+      });
+    },
+
+    // A QC fix's appended consistency block (report §2.6): the shot's prompt grows by one block and
+    // its base hashes cannot move. Metadata plus the new parts; no approval, no job, no spend.
+    appendBlock(projectId, shotId, block, { reason = null, at = now() } = {}) {
+      return withProject(projectId, (project) => {
+        const i = find(project, shotId);
+        project.shots[i] = shotWithConsistencyBlock(project.shots[i], block, { reason, at });
+        return project.shots[i];
       });
     },
 

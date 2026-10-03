@@ -19,9 +19,10 @@ import { buildReceipt } from './lib/receipt.js';
 import { resumePlan, resumeGate, coolDown } from './lib/resume.js';
 import { buildDiagnostics } from './lib/diagnostics.js';
 import { FLOW_COMPAT, compatNote, compatReport } from './lib/compat.js';
-import { createEntityStore, createTemplateStore, resolveEntities, composePrompt as compose, libraryWarnings } from './lib/entities.js';
+import { createEntityStore, createTemplateStore, resolveEntities, composePrompt as compose, libraryWarnings, appendConsistencyBlock } from './lib/entities.js';
 import { loadDefaults } from './lib/prompt-assets.js';
 import { createShotStore, planShotImport, stillJobSpec, materializeShot, stillGate, approveStill, estimateShotCredits } from './lib/shots.js';
+import { QC_POLICY, qcVerdict, buildQcRecord, fixJobSpec, fixCostText, policyFor, jobPromptParts } from './lib/qc.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -660,6 +661,63 @@ const handlers = {
   async approveAnchor(args, sender) {
     return approveAnchor({ ...args, approvedBy: fromDashboard(sender) ? 'dashboard' : 'agent' });
   },
+
+  // ---- The QC loop (report §2.6, Phase 3). A verdict is job metadata written like `references`:
+  // no state change, no click, no spend. `technical` is computed from the job by the record builder,
+  // never taken on trust from a caller, and the verdict is derived from the six checks. A fix offers
+  // a new job through the existing paths (a still through `queueStill`, a video through the
+  // materialisation the still gate already owns) and never rewrites an approved still or a base
+  // prompt: the block is appended, the failed take stays on disk, and nothing regenerates by itself.
+  async qcSet({ id, checks, note = null }, sender) {
+    const job = await store.get(id);
+    if (!job) throw new Error(`No job ${id}`);
+    if (!['done', 'failed'].includes(job.state)) {
+      throw new Error(`Job ${id} is ${job.state}: there is nothing to review yet, wait until it is done or failed`);
+    }
+    const record = buildQcRecord({ job, checks: checks ?? {}, note, by: fromDashboard(sender) ? 'human' : 'agent' });
+    return store.setQc(id, record);
+  },
+  async qcFix({ id, check }, sender) {
+    const job = await store.get(id);
+    if (!job) throw new Error(`No job ${id}`);
+    if (!job.qc) throw new Error(`No QC verdict on ${id} yet: review it first (\`flowpilot qc ${id} --identity pass …\`)`);
+    policyFor(check); // an unknown check id is a usage error, not a silent "nothing to fix"
+    const { actions } = qcVerdict(job.qc.checks, QC_POLICY, { note: job.qc.note });
+    const action = actions.find((a) => a.check === check);
+    if (!action) throw new Error(`${JSON.stringify(check)} is not a failed check on ${id}, so there is nothing to fix`);
+    if (action.automatic || !action.block) throw new Error(`The ${check} failure has no fix to offer: ${action.what}`);
+    const block = { id: `${check}_fix`, check, text: action.block };
+    const reason = `QC fix (${check})`;
+    const shotId = job.anchor?.shotId ?? null;
+
+    if (shotId) {
+      // The shot's own prompt grows by the block (the base hashes cannot move), then the ordinary
+      // paths do the rest: a still fix queues a free still and re-anchors it later; a video-only fix
+      // builds a new video from the still that is already approved.
+      await requireShot(job.projectId, shotId);
+      await shotStore.appendBlock(job.projectId, shotId, block, { reason });
+      if (action.still) {
+        const queued = await queueStill({ projectId: job.projectId, shotId });
+        return { check, action: action.action, reason, cost: fixCostText(action), still: queued.still, video: null };
+      }
+      const { shot: fresh, approvals } = await requireShot(job.projectId, shotId);
+      const gate = stillGate(fresh, approvals);
+      if (!gate.ok) throw new Error(`The ${check} fix needs the shot's still approved first: ${gate.problems.join('; ')}`);
+      const [recipes, library] = await Promise.all([catalogRecipes(), entityStore.library(job.projectId)]);
+      const added = await store.add(materializeShot(fresh, approvals, { projectId: job.projectId, recipes, library }));
+      await shotStore.attachVideo(job.projectId, shotId, added.id);
+      return { check, action: action.action, reason, cost: fixCostText(action), still: null, video: added };
+    }
+
+    // A clip that is not part of a shot: the same spec plus the appended block, through the one
+    // validation path every job uses (`buildJob` + the store), so a fix can never submit on weaker
+    // terms than a hand-added job.
+    const parts = appendConsistencyBlock(jobPromptParts(job), block);
+    const spec = fixJobSpec(job, action, parts);
+    const added = await store.add(buildJob(spec, { projectId: job.projectId, recipes: await catalogRecipes() }));
+    const isStill = added.settings.kind === 'image';
+    return { check, action: action.action, reason, cost: fixCostText(action), still: isStill ? added : null, video: isStill ? null : added };
+  },
   // A signed thumbnail URL for a shot's still (read-only: the media-detail RPC only). The dashboard
   // shows it inline; a block still halts everything, like every other Flow read.
   async stillThumb({ projectId, mediaId }) {
@@ -803,6 +861,9 @@ const AGENT_COMMANDS = new Set([
   'entities', 'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede',
   'entityRemove', 'entitySetStyle', 'entityImport', 'entityExport', 'entityRestore', 'composePrompt',
   'shots', 'importShots', 'queueStill', 'approveAnchor', 'stillThumb',
+  // The QC loop is job data too: an agent may record a verdict and take a fix (a queued job, still
+  // behind the cap and never a click). The cap, the halt, the work tab and pairing stay dashboard-only.
+  'qcSet', 'qcFix',
 ]);
 
 const bridge = createBridge({
@@ -826,6 +887,8 @@ const NO_TICK = new Set([
   'entities', 'composePrompt', 'entityExport',
   'entityUpsert', 'entityApprove', 'entityUnapprove', 'entityAddRef', 'entitySupersede', 'entityRemove',
   'entitySetStyle', 'entityImport', 'entityRestore',
+  // Reading or recording a verdict changes no state; taking a fix queues a job, so it does tick.
+  'qcSet',
 ]);
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {

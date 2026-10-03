@@ -235,3 +235,31 @@ test('a free still preview clicks at 0 credits and the session spend never moves
   assert.equal(clicked.cost, 0);
   assert.equal((await store.session()).spent, 0);
 });
+
+test('a QC record is written as metadata: no state change, no spend, and a bad one is refused', async () => {
+  const { area, store } = await storeWithCap();
+  const { id } = await store.add(spec);
+  await store.apply(id, { type: 'approve' });
+  await store.apply(id, { type: 'start', tabId: 7 });
+  const before = await store.get(id);
+  const record = {
+    checkedAt: 1790000000000, by: 'human',
+    checks: { technical: 'pass', identity: 'pass', wardrobe: 'fail', location: 'pass', artefacts: 'pass', style: 'pass' },
+    verdict: 'regen', note: 'rear half of the car went flat bronze after 2s',
+  };
+  const updated = await store.setQc(id, record);
+  assert.deepEqual(updated.qc, record);
+  assert.equal(updated.state, before.state); // exactly like setReferences: metadata only
+  assert.deepEqual(updated.history, before.history);
+  assert.equal((await store.session()).spent, 0);
+  // It survives a service-worker restart, like every other job field.
+  assert.deepEqual((await createJobStore(area).get(id)).qc, record);
+  // A second verdict replaces the first.
+  await store.setQc(id, { ...record, verdict: 'approved', checks: { ...record.checks, wardrobe: 'pass' }, note: null });
+  assert.deepEqual((await store.get(id)).qc.checks, { technical: 'pass', identity: 'pass', wardrobe: 'pass', location: 'pass', artefacts: 'pass', style: 'pass' });
+  assert.equal((await store.get(id)).state, before.state);
+  // The store is the gate: a malformed record never lands.
+  await assert.rejects(store.setQc(id, { ...record, verdict: 'ship it' }), /verdict/);
+  await assert.rejects(store.setQc(id, { ...record, by: 'robot' }), /human or agent/);
+  await assert.rejects(store.setQc('nope', record), /No job/);
+});

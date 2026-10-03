@@ -15,7 +15,19 @@ import { fixture } from './helpers.mjs';
 import {
   SHOT_ROLES, SHOT_MODES, validateShot, planReferences, stillReferences, shotComposeInput,
   stillJobSpec, videoJobSpec, materializeShot, stillGate, approveStill, supersedeStill,
+  shotWithConsistencyBlock, createShotStore, SHOTS_KEY,
 } from '../lib/shots.js';
+import { promptBaseHash } from '../lib/entities.js';
+
+// Same contract as chrome.storage.local.
+function memoryArea() {
+  const data = {};
+  return {
+    data,
+    async get(key) { return key in data ? { [key]: structuredClone(data[key]) } : {}; },
+    async set(obj) { for (const [k, v] of Object.entries(obj)) data[k] = structuredClone(v); },
+  };
+}
 
 const recipes = parseCatalog(parseBatchResponse(fixture('HTrJv'), 'HTrJv').data);
 const defaults = await loadDefaults();
@@ -288,4 +300,43 @@ test('an ingredients shot materialises an Ingredients video once its still is ap
   assert.deepEqual(job.referencePlan.ingredients, [{ kind: 'mediaId', mediaId: MEDIA.rudy }]);
   assert.equal(job.referencePlan.firstFrame, null);
   assert.equal(job.anchor.startFrameMediaId, MEDIA.still); // the approval is recorded even when unused as a frame
+});
+
+// --- QC fixes append a block, never rewrite the base (report §2.2, §2.6) ----------------------
+
+test('a QC fix appends a consistency block to the shot and leaves every base hash identical', () => {
+  const before = baseShot();
+  const base = promptBaseHash(before.promptParts);
+  const fixed = shotWithConsistencyBlock(before, { id: 'wardrobe_fix', text: 'the car keeps its two-tone split' }, { at: 700, reason: 'QC fix (wardrobe)' });
+  assert.equal(promptBaseHash(fixed.promptParts), base);
+  assert.equal(fixed.promptParts.length, before.promptParts.length + 1);
+  assert.equal(fixed.promptParts.at(-1).kind, 'consistency');
+  assert.equal(fixed.promptParts.at(-1).ref, 'wardrobe_fix');
+  assert.equal(fixed.prompt, fixed.promptParts.map((p) => p.text).join('\n\n'));
+  assert.match(fixed.prompt, /the car keeps its two-tone split/);
+  assert.equal(fixed.history.at(-1).at, 700);
+  assert.match(fixed.history.at(-1).reason, /wardrobe/);
+  // The shot that was reviewed is untouched: a fix adds to the record, it never edits it.
+  assert.deepEqual(before.promptParts, baseShot().promptParts);
+  assert.equal(before.history, undefined);
+  // A second fix appends again; the base hash still has not moved.
+  const twice = shotWithConsistencyBlock(fixed, { id: 'identity_fix', text: 'the face stays Rudy' }, { at: 800 });
+  assert.equal(promptBaseHash(twice.promptParts), base);
+  assert.deepEqual(twice.promptParts.slice(0, before.promptParts.length), before.promptParts);
+  assert.deepEqual(twice.promptParts.slice(before.promptParts.length).map((p) => p.ref), ['wardrobe_fix', 'identity_fix']);
+});
+
+test('the shot store appends a block in place of the shot record, keeping its base parts', async () => {
+  const area = memoryArea();
+  const store = createShotStore(area, { now: () => 900 });
+  await store.addMany(PID, [baseShot()]);
+  const base = promptBaseHash(baseShot().promptParts);
+  const next = await store.appendBlock(PID, 'shot_4', { id: 'artefacts_fix', text: 'no text or watermark' }, { reason: 'QC fix (artefacts)' });
+  assert.equal(promptBaseHash(next.promptParts), base);
+  assert.equal(next.promptParts.at(-1).ref, 'artefacts_fix');
+  const stored = (await store.list(PID)).shots.find((s) => s.id === 'shot_4');
+  assert.equal(stored.prompt, next.prompt);
+  assert.equal(stored.promptParts.length, baseShot().promptParts.length + 1);
+  assert.deepEqual(area.data[SHOTS_KEY].projects[PID].shots[0].promptParts, next.promptParts);
+  await assert.rejects(store.appendBlock(PID, 'nope', { id: 'x', text: 'y' }), /No shot/);
 });
