@@ -21,6 +21,9 @@ const USAGE = `Usage: flowpilot <command>
       [--last-frame REF]        Frames: the end photo; the video is generated in between
   approve|cancel|requeue|retry-download <id>
   doctor                    Check the setup
+  install-claude [--config PATH]
+                            Add (or update) the Flow Pilot server in your Claude Desktop config,
+                            backing the file up first; --config writes elsewhere
   mcp                       Run as an MCP server on stdio (starts the helper itself if it is not
                             already running, and stops only the one it started)
 
@@ -31,6 +34,7 @@ const OPTIONS = {
   duration: { type: 'string' }, aspect: { type: 'string' }, count: { type: 'string' }, project: { type: 'string' },
   out: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   'forget-extension': { type: 'boolean' },
+  config: { type: 'string' },
   ref: { type: 'string', multiple: true }, 'first-frame': { type: 'string' }, 'last-frame': { type: 'string' },
 };
 
@@ -57,6 +61,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     switch (cmd) {
       case 'serve': return await serve(p, out, { forgetExtension: o['forget-extension'] });
       case 'mcp': return await mcp(p, env, err, { input, output });
+      case 'install-claude': return await installClaude(p, o, out, env);
       case 'pair': {
         if (!rest[0]) throw new Usage('pair needs the code from the dashboard');
         saveKey(p, await client().pair(rest[0], o.name ?? 'cli'));
@@ -116,6 +121,36 @@ async function mcp(p, env, err, { input, output } = {}) {
     await helper.stop();
   }
   return 0;
+}
+
+async function installClaude(p, o, out, env) {
+  const { installClaudeDesktop, buildServerEntry, defaultConfigPath, checkNode } = await import('./claude-desktop.js');
+  checkNode(); // a missing or too-old Node gets a clear message here, not a broken server in Claude
+  const file = o.config || defaultConfigPath({ env });
+  const result = installClaudeDesktop({ file, entry: buildServerEntry({ env }) });
+  if (o.json) { out(JSON.stringify(result, null, 2)); return 0; }
+  out(describeInstall(result, p));
+  return 0;
+}
+
+function describeInstall({ file, backup, changed, previous, entry }, p) {
+  const lines = [`Claude Desktop config: ${file}`];
+  if (backup) lines.push(`Backup saved:          ${backup}`);
+  if (!changed) lines.push('Unchanged:             mcpServers.flowpilot already points at this install.');
+  else if (previous) lines.push(`Updated mcpServers.flowpilot:\n  was: ${JSON.stringify(previous)}\n  now: ${JSON.stringify(entry)}`);
+  else lines.push(`Added mcpServers.flowpilot: ${JSON.stringify(entry)}`);
+  lines.push(
+    '',
+    'Next steps:',
+    '  1. Restart Claude Desktop so it loads the new server.',
+    '  2. In the Flow Pilot dashboard, click "Pair an agent" and copy the one-time code,',
+    '     then run:  flowpilot pair <CODE>',
+    `     The key is saved owner-only in ${p.key}; only jobs and results cross the bridge, never cookies or tokens.`,
+    '  3. Flow Pilot needs the extension installed in your Chromium browser and a Flow work tab',
+    '     chosen in the popup before any job can run.',
+    '  4. In Claude, try: "Use flowpilot_status to show my Flow Pilot queue."',
+  );
+  return lines.join('\n');
 }
 
 async function serve(p, out, { forgetExtension = false } = {}) {
