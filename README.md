@@ -19,7 +19,9 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the settled decisions and hard rules, and
 2. **Open Google Flow.** Go to <https://flow.google.com>, sign into the account you want to drive,
    and open a project. Bring that tab to the front, then click the Flow Pilot toolbar icon and
    press **Use this tab as the work tab**. (Flow only re-renders in the front tab, so jobs are
-   prepared and submitted with the work tab in front — see LESSONS #23.)
+   prepared and submitted with the work tab in front — see LESSONS #23. If approved jobs are
+   waiting for that, the popup and dashboard show it and a **Show the Flow tab** button brings the
+   tab forward.)
 3. **Start the helper** (only needed for agents). From the repo:
 
    ```
@@ -47,13 +49,36 @@ is overlaid on Flow's own page.
 
 - **Popup** — shows status and self-check results, lets you set the current tab as the work tab,
   and opens the dashboard.
-- **Dashboard** — the self-check summary, an **Agents** section with the **Pair an agent** button,
-  the **Session credit cap** (set or raise it here; nothing is submitted past it), a **Batch /
-  storyboard import** section, an **Add a job** form (name, prompt, kind image/video, resolution,
-  duration, aspect, count, and references — Ingredients or Frames, below), and the **Queue** table.
+- **Dashboard** — the **Flow health** screen, an **Agents** section with the **Pair an agent**
+  button, the **Session credit cap** (set or raise it here; nothing is submitted past it), a **Batch
+  / storyboard import** section, an **Add a job** form (name, prompt, **Preview first**, kind
+  image/video, resolution, duration, aspect, count, and references — Ingredients or Frames, below),
+  and the **Queue** table.
 - **Approvals** — each queued job shows an **Approve** button; jobs wait as `queued` until approved,
   then run from the work tab. Queued/approved/halted jobs can be **Cancel**led; a failed job that
   was never clicked can be **Re-queue**d, and one whose render finished can **Retry download**.
+- **Preview first (free still, then video)** — tick **Preview first** in the **Add a job** form and
+  Flow Pilot queues the scene as a **free still** (Nano Banana images cost 0 credits) plus a video
+  job held as `awaiting-preview`. The still runs as an ordinary image job and spends nothing. When
+  it finishes, the video's row offers one button, **Approve still → run video (N credits)** — the
+  video's price is shown before you click it. That click attaches the still as the video's first
+  frame through the ordinary **Frames** path and lets it run. A held video can never be approved or
+  submitted before that, and only the dashboard can promote one, so the look is approved before any
+  credits are spent.
+- **Describe it once** — the **Describe it once → scene prompts** button (popup or dashboard) opens a
+  page that turns one plain sentence into a set of scene prompts (wide establishing shot → medium →
+  close-up → over-the-shoulder → low-angle → tracking) from a documented template, entirely
+  offline. Each prompt is editable text with its own **Copy** button and a **Copy all prompts**
+  button; paste the ones you like into the dashboard's prompt box or `flowpilot add --prompt`.
+- **Keep the Flow tab in front** — Flow only re-renders in the front/visible tab (LESSONS #23), so
+  jobs are submitted only while the work tab is in front. When approved jobs are waiting for it the
+  popup and dashboard say so with the exact count — **"3 jobs waiting: keep the Flow tab in front
+  while jobs submit."** — plus a **Show the Flow tab** button; bringing the tab forward resumes
+  submission on its own. The extension never switches tabs by itself.
+- **Flow health** — the popup and dashboard show the self-check as plain-language lines, one per
+  check, and say where to look when a job fails with **"Flow changed"**: re-capture read-only with
+  `node recon/capture.mjs --port 9333`, update `recon/FINDINGS.md`, and check the RPC ids in
+  `extension/lib/rpc.js`.
 - **Credit cap** — cost is shown per job before it runs, and the session cap is a hard ceiling.
   **Only the dashboard can set or raise the cap** — agents cannot.
 - **Halts** — any `UNUSUAL_ACTIVITY` (or similar block) stops the whole queue and shows a banner
@@ -201,6 +226,9 @@ These are non-negotiable — see [`docs/SPEC.md`](docs/SPEC.md):
 - Any `UNUSUAL_ACTIVITY` halts **all** jobs, with no automatic retry.
 - One work tab: it works only in the tab you point it at, and never opens, reloads or closes tabs
   on its own.
+- A free preview stays free: Flow Pilot refuses to create a preview whose still is not reported at
+  0 credits, and a held video cannot be submitted until a person approves its still from the
+  dashboard.
 - A downloaded file is accepted only after its bytes match its type.
 
 MIT licensed. Loaded unpacked; no Chrome Web Store for now.
