@@ -3,7 +3,13 @@
 //
 //   queued → approved → submitting → submitted → rendering → downloading → done
 //                          │ (clicked is written BEFORE the real click: write-ahead)
-//   any active → failed | halted;  queued/approved → cancelled;  failed (with a result) → downloading
+//   any active → failed | halted;  queued/approved/halted/awaiting-preview → cancelled
+//   failed (with a result) → downloading
+//
+// Preview-first: a video job may start held in `awaiting-preview`, waiting on a free still
+// (0 credits — Flow charges nothing for Nano Banana images). It can never be submitted in that
+// state; the person promotes it with the approved still's media id, which moves it to `approved`
+// with the still attached as its first frame. Promoting never clicks and never spends.
 //
 // The write-ahead click is what makes the machine safe to resume: a job that reached `submitted`
 // is never clicked again, even if the click itself never happened. It can only be matched to a
@@ -19,10 +25,13 @@ const TRANSITIONS = {
   matched: { from: ['submitted'], to: 'rendering' },
   ready: { from: ['submitted', 'rendering'], to: 'downloading' },
   saved: { from: ['downloading'], to: 'done' },
-  fail: { from: ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading', 'halted'], to: 'failed' },
-  cancel: { from: ['queued', 'approved', 'halted'], to: 'cancelled' },
+  fail: { from: ['queued', 'approved', 'submitting', 'submitted', 'rendering', 'downloading', 'halted', 'awaiting-preview'], to: 'failed' },
+  cancel: { from: ['queued', 'approved', 'halted', 'awaiting-preview'], to: 'cancelled' },
   requeue: { from: ['failed'], to: 'queued' },
   retryDownload: { from: ['failed'], to: 'downloading' }, // fetches the finished result again; never clicks
+  // The free still was approved: the video may now run from it (the pre-spend check and the cap
+  // still gate the actual click). Never spends by itself.
+  promote: { from: ['awaiting-preview'], to: 'approved' },
 };
 
 // Pure: returns the next job or throws. `session` is read for the cap and halt checks.
@@ -62,6 +71,11 @@ export function transition(job, event, session, now = Date.now()) {
     case 'requeue':
       if (job.clickedAt != null) throw new Error(`Job ${job.id} already clicked once; add a new job instead`);
       if (job.mayHaveSubmitted) throw new Error(`Job ${job.id} may have been submitted already; check Flow and add a new job instead`);
+      next.error = null;
+      break;
+    case 'promote':
+      next.settings = event.settings;
+      next.referencePlan = event.referencePlan;
       next.error = null;
       break;
     case 'retryDownload':
@@ -110,15 +124,20 @@ export function createJobStore(area, { now = () => Date.now(), newId = () => cry
     add(spec) {
       return update((state) => {
         const t = now();
+        // `initialState` lets a preview-first video start held (`awaiting-preview`) instead of
+        // `queued`; it is not stored on the job.
+        const initial = spec.initialState ?? 'queued';
+        const state0 = state.session.halted ? 'halted' : initial;
         const job = {
           ...spec,
           id: newId(),
-          state: state.session.halted ? 'halted' : 'queued',
-          haltedFrom: state.session.halted ? 'queued' : undefined,
+          state: state0,
+          haltedFrom: state.session.halted ? initial : undefined,
           tabId: null, clickedAt: null, cost: null, mediaId: null, file: null, error: null,
           createdAt: t, updatedAt: t,
-          history: [{ state: 'queued', at: t }],
+          history: [{ state: state0, at: t }],
         };
+        delete job.initialState;
         state.jobs.push(job);
         return job;
       });

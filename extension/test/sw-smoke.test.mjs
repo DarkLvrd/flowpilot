@@ -10,7 +10,8 @@ const data = {};
 const writes = [];
 let listener;
 let onFocus, onActivated; // window focus and tab switch listeners
-const tabs = { 7: { id: 7, url: `https://flow.google.com/project/${PID}` } };
+const focusCalls = []; // tabs.update / windows.update calls (bringing the work tab forward)
+const tabs = { 7: { id: 7, windowId: 1, url: `https://flow.google.com/project/${PID}` } };
 const driverChecks = [{ name: 'Prompt box', ok: true }];
 let rateLimited = false; // next RPC answers HTTP 429
 
@@ -28,10 +29,10 @@ globalThis.chrome = {
     onChanged: { addListener() {} },
   },
   alarms: { create() {}, onAlarm: { addListener() {} } },
-  windows: { WINDOW_ID_NONE: -1, onFocusChanged: { addListener: (fn) => { onFocus = fn; } } },
+  windows: { WINDOW_ID_NONE: -1, onFocusChanged: { addListener: (fn) => { onFocus = fn; } }, async update(id, info) { focusCalls.push({ window: id, ...info }); } },
   tabs: {
     async get(id) { if (!tabs[id]) throw new Error('no tab'); return tabs[id]; },
-    async update() {},
+    async update(id, info) { focusCalls.push({ tab: id, ...(info ?? {}) }); },
     async sendMessage(_id, msg) { return msg.cmd === 'selfCheck' ? { ok: true, value: driverChecks } : { ok: false, error: 'not in smoke test' }; },
     onUpdated: { addListener() {} },
     onActivated: { addListener: (fn) => { onActivated = fn; } },
@@ -157,6 +158,83 @@ test('window focus and tab switches tick only while a job waits for the Flow tab
   assert.equal(await ticked(() => onActivated({ tabId: 7 })), true);
 });
 
+// ---- Preview-first ---------------------------------------------------------------------------
+
+const STILL_MEDIA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+// Puts a job the extension already queued into the state a finished still would be in.
+const markStillDone = (id) => {
+  data['flowpilot'].jobs = data['flowpilot'].jobs.map((j) =>
+    (j.id === id ? { ...j, state: 'done', mediaId: STILL_MEDIA, file: { path: 'FlowPilot/x/still.png', type: 'png' } } : j));
+};
+
+test('preview-first queues a free still and holds the video until that still is approved', async () => {
+  const r = await send({ cmd: 'previewJob', spec: { name: 'fox film', prompt: 'a red fox in snow', resolution: '360p', durationS: 4 } });
+  assert.equal(r.ok, true, r.error);
+  const { still, video } = r.value;
+  assert.equal(still.settings.kind, 'image');
+  assert.equal(still.expectedCost, 0);        // Flow charges nothing for a still
+  assert.equal(still.state, 'queued');
+  assert.equal(still.role, 'preview');
+  assert.equal(video.state, 'awaiting-preview');
+  assert.equal(video.role, 'video');
+  assert.equal(video.previewJobId, still.id);
+  assert.equal(video.expectedCost, 4);        // the eventual video's cost is known while it waits
+  assert.equal(video.recipe, 'abra_i2v_4s_360p');
+  assert.equal(video.settings.input, 'frames');
+});
+
+test('preview-first refuses ingredient references and a first frame: it builds the first frame from the still', async () => {
+  const REF = '1037d045-1d92-4e1e-a0f7-b695b9ed1372';
+  const a = await send({ cmd: 'previewJob', spec: { name: 'x', prompt: 'p', refs: [REF] } });
+  assert.equal(a.ok, false);
+  assert.match(a.error, /Frames|ingredient/i);
+  const b = await send({ cmd: 'previewJob', spec: { name: 'x', prompt: 'p', firstFrame: REF } });
+  assert.equal(b.ok, false);
+  assert.match(b.error, /first frame/i);
+});
+
+test('a held video cannot be approved, and promoting it fails until the still has finished', async () => {
+  const r = await send({ cmd: 'previewJob', spec: { name: 'held', prompt: 'p', resolution: '360p', durationS: 4 } });
+  const { video } = r.value;
+  assert.match((await send({ cmd: 'approve', id: video.id })).error, /awaiting-preview/);
+  const p = await send({ cmd: 'promotePreview', id: video.id });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /still/i);
+  assert.equal((await send({ cmd: 'status' })).value.counts.awaitingPreview >= 1, true);
+});
+
+test('promoting a held video attaches the finished still as its first frame and spends nothing', async () => {
+  const r = await send({ cmd: 'previewJob', spec: { name: 'shoot', prompt: 'p', resolution: '360p', durationS: 4 } });
+  const { still, video } = r.value;
+  markStillDone(still.id);
+  const p = await send({ cmd: 'promotePreview', id: video.id });
+  assert.equal(p.ok, true, p.error);
+  assert.equal(p.value.state, 'approved');
+  assert.equal(p.value.settings.firstFrame, STILL_MEDIA);
+  assert.deepEqual(p.value.referencePlan.firstFrame, { kind: 'mediaId', mediaId: STILL_MEDIA });
+  assert.equal((await send({ cmd: 'status' })).value.session.spent, 0);
+});
+
+test('only the dashboard may promote a still (the popup cannot)', async () => {
+  const r = await send({ cmd: 'previewJob', spec: { name: 'gate', prompt: 'p' } });
+  assert.match((await send({ cmd: 'promotePreview', id: r.value.video.id }, `${EXT}popup/popup.html`)).error, /Only the dashboard/);
+});
+
+test('the Flow tab can be brought forward on a person’s click, and the status counts the jobs waiting', async () => {
+  await send({ cmd: 'useTab', tabId: 7 });
+  focusCalls.length = 0;
+  const r = await send({ cmd: 'focusWorkTab' });
+  assert.equal(r.ok, true, r.error);
+  assert.ok(focusCalls.some((c) => c.tab === 7 && c.active === true), JSON.stringify(focusCalls));
+  assert.ok(focusCalls.some((c) => c.window === 1 && c.focused === true), JSON.stringify(focusCalls));
+  const s = (await send({ cmd: 'status' })).value;
+  assert.equal(typeof s.counts.awaitingPreview, 'number');
+  assert.equal(s.counts.approved > 0, true); // jobs approved but not yet submitted wait for the front tab
+  assert.equal(s.waitingFor.reason, 'front-tab');
+  assert.equal(s.waitingFor.count, s.counts.approved);
+});
+
 // ---- Helper bridge ----------------------------------------------------------------------------
 
 const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
@@ -183,6 +261,16 @@ test('agents through the helper get only the agent commands: never the cap, the 
   }
   assert.equal(replyTo(4).ok, true);
   assert.equal(replyTo(4).value.session.cap, 10);
+});
+
+test('agents cannot bring the Flow tab forward or promote a still: both are person actions', async () => {
+  helperSays({ id: 10, cmd: 'focusWorkTab', args: {} });
+  helperSays({ id: 11, cmd: 'promotePreview', args: { id: 'x' } });
+  await settle();
+  for (const id of [10, 11]) {
+    assert.equal(replyTo(id).ok, false);
+    assert.match(replyTo(id).error, /Agents cannot/);
+  }
 });
 
 test('the dashboard gets a pairing code from the helper (the popup cannot)', async () => {

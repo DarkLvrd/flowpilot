@@ -172,3 +172,66 @@ test('a download retried during a halt waits as halted, like every other active 
   await store.clearHalt();
   assert.equal((await store.get(id)).state, 'downloading');
 });
+
+// ---- Preview-first: a free still gates the paid video ----------------------------------------
+
+const heldSpec = {
+  name: 'film', projectId: 'p1', prompt: 'a red fox', settings: { kind: 'video', input: 'frames' },
+  recipe: 'abra_i2v_4s_360p', expectedCost: 7, role: 'video', previewJobId: 'still-1',
+  referencePlan: { input: 'frames', ingredients: [], firstFrame: null, lastFrame: null },
+  initialState: 'awaiting-preview',
+};
+
+test('a video held on its still preview cannot be approved, started or clicked until it is promoted', async () => {
+  const { store } = await storeWithCap();
+  const held = await store.add(heldSpec);
+  assert.equal(held.state, 'awaiting-preview');
+  assert.equal(held.expectedCost, 7); // the eventual video's cost is visible while it waits ... (dashboard shows it)
+
+  await assert.rejects(store.apply(held.id, { type: 'approve' }), /awaiting-preview/);
+  await assert.rejects(store.apply(held.id, { type: 'start', tabId: 7 }), /awaiting-preview/);
+  await assert.rejects(store.apply(held.id, { type: 'clicked', at: 1, cost: 7 }), /awaiting-preview/);
+  assert.equal((await store.session()).spent, 0);
+});
+
+test('promoting a held video attaches the approved still as its first frame and spends nothing', async () => {
+  const { store } = await storeWithCap();
+  const held = await store.add(heldSpec);
+  const promoted = await store.apply(held.id, {
+    type: 'promote',
+    referencePlan: { input: 'frames', ingredients: [], firstFrame: { kind: 'mediaId', mediaId: 'still-media' }, lastFrame: null },
+    settings: { kind: 'video', input: 'frames', firstFrame: 'still-media' },
+  });
+  assert.equal(promoted.state, 'approved');
+  assert.equal(promoted.clickedAt, null);
+  assert.equal(promoted.cost, null);
+  assert.deepEqual(promoted.referencePlan.firstFrame, { kind: 'mediaId', mediaId: 'still-media' });
+  assert.equal(promoted.settings.firstFrame, 'still-media');
+  assert.equal((await store.session()).spent, 0); // the free step never touches the spend
+});
+
+test('a held job can be cancelled, and a halt parks it until the halt is cleared', async () => {
+  const { store } = await storeWithCap();
+  const a = await store.add({ ...heldSpec, name: 'a' });
+  const b = await store.add({ ...heldSpec, name: 'b' });
+  await store.apply(a.id, { type: 'cancel' });
+  assert.equal((await store.get(a.id)).state, 'cancelled');
+
+  await store.halt('UNUSUAL_ACTIVITY');
+  assert.equal((await store.get(b.id)).state, 'halted');
+  await store.clearHalt();
+  assert.equal((await store.get(b.id)).state, 'awaiting-preview');
+});
+
+test('a free still preview clicks at 0 credits and the session spend never moves', async () => {
+  const { store } = await storeWithCap();
+  const still = await store.add({
+    name: 'film-still', projectId: 'p1', prompt: 'a red fox',
+    settings: { kind: 'image' }, recipe: 'NARWHAL', expectedCost: 0, role: 'preview',
+  });
+  await store.apply(still.id, { type: 'approve' });
+  await store.apply(still.id, { type: 'start', tabId: 7 });
+  const clicked = await store.apply(still.id, { type: 'clicked', at: 1, cost: 0 });
+  assert.equal(clicked.cost, 0);
+  assert.equal((await store.session()).spent, 0);
+});

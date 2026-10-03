@@ -119,7 +119,14 @@ export function createRunner({ store, flow, driver, files, workTab, refs, settin
     if (!next) return;
     // Approving happens in the dashboard, so the Flow tab is usually behind it at that moment.
     // Wait (job stays approved) until the person brings Flow to the front; never switch tabs for them.
-    if (!(await driver.inFront(tab.tabId))) return { waiting: 'Bring the Flow tab to the front to submit the next job' };
+    if (!(await driver.inFront(tab.tabId))) {
+      const count = jobs.filter((j) => j.state === 'approved' && j.projectId === tab.projectId).length;
+      return {
+        waiting: `${count} job${count === 1 ? '' : 's'} waiting: keep the Flow tab in front to submit`,
+        waitingCount: count,
+        waitingReason: 'front-tab',
+      };
+    }
 
     let job = await store.apply(next.id, { type: 'start', tabId: tab.tabId });
     // Resolve and record the job's references before the composer is prepared, so the driver can

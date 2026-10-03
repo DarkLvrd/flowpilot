@@ -9,6 +9,7 @@ import { parseCatalog, creditCost } from './lib/catalog.js';
 import { buildJob, safeName } from './lib/jobspec.js';
 import { parseProjectMedia } from './lib/media.js';
 import { newlyUploadedId, referenceNames } from './lib/refs.js';
+import { promotePatch, assertFreePreview, awaitingPreviewCount } from './lib/preview.js';
 import { parseSettingsSummary, parseCostLine } from './lib/preflight.js';
 import { createBridge, HELPER_PORT } from './lib/bridge.js';
 import { planImport } from './lib/storyboard.js';
@@ -209,7 +210,10 @@ async function tick() {
     const settings = { ...DEFAULT_SETTINGS, ...(await local.get('flowpilot.settings', {})) };
     const runner = createRunner({ store, flow, driver, files, workTab, refs, settings });
     const result = await runner.tick();
-    await local.set('flowpilot.lastTick', { at: Date.now(), error: result.error ?? null, waiting: result.waiting ?? null });
+    await local.set('flowpilot.lastTick', {
+      at: Date.now(), error: result.error ?? null, waiting: result.waiting ?? null,
+      waitingCount: result.waitingCount ?? null, waitingReason: result.waitingReason ?? null,
+    });
     await guardWorkTab();
   })().finally(() => { ticking = null; });
   return ticking;
@@ -312,18 +316,82 @@ async function planBatch({ text, filename, template, presetId }) {
   return { result, preset };
 }
 
+// Preview-first: a video job created as a free still (0-credit image) that the person approves
+// before any video runs. The still is an ordinary image job built through the one validation path
+// (buildJob); the video is held in `awaiting-preview` (buildJob's holdFirstFrame) and can never be
+// submitted in that state. Promoting it (a dashboard action) attaches the approved still as the
+// video's Frames first frame — the existing Frames path.
+async function addPreviewJob(spec) {
+  const tab = await workTab.get();
+  if (!tab) throw new Error('Pick a work tab first');
+  const projectId = spec.projectId ?? tab.projectId;
+  const recipes = await catalogRecipes();
+  const name = safeName(spec.name ?? `job-${Date.now()}`);
+
+  // The still is the same scene at the same framing, built as an ordinary image job.
+  const stillJob = buildJob(
+    { name: `${name}-still`, prompt: spec.prompt, kind: 'image', resolution: spec.resolution, durationS: spec.durationS, aspect: spec.aspect, count: spec.count },
+    { projectId, recipes },
+  );
+  // A preview must be free: refuse to create one whose still would cost credits (an unknown cost
+  // fails closed here too), so the "free preview" step can never spend.
+  assertFreePreview(stillJob.expectedCost, stillJob.recipe);
+
+  // The held video: Frames, with the still as its first frame once the person approves it.
+  const videoJob = buildJob({ ...spec, name, kind: 'video' }, { projectId, recipes, holdFirstFrame: true });
+
+  const still = await store.add({ ...stillJob, role: 'preview' });
+  const video = await store.add({ ...videoJob, role: 'video', previewJobId: still.id, initialState: 'awaiting-preview' });
+  return { still, video };
+}
+
+// The person approved the still: attach it as the video's first frame and let it run (the pre-spend
+// check and the session cap still gate the click). Dashboard-only — it is the free-then-paid step.
+async function promotePreview(id) {
+  const job = await store.get(id);
+  if (!job) throw new Error(`No job ${id}`);
+  if (job.state !== 'awaiting-preview') throw new Error(`${job.name} is ${job.state}, so there is no still to approve`);
+  const still = job.previewJobId ? await store.get(job.previewJobId) : null;
+  if (!still) throw new Error(`${job.name} has no still preview`);
+  if (still.state === 'failed') throw new Error(`The still preview failed (${still.error ?? 'unknown error'}); cancel this video or re-queue the still`);
+  if (still.state !== 'done' || !still.mediaId) throw new Error(`The still preview for ${job.name} is ${still.state}; approve it once it finishes`);
+  return store.apply(id, { type: 'promote', ...promotePatch(job, still.mediaId) });
+}
+
+// The person's own action: bring the work tab (and its window) forward so Flow re-renders and the
+// queue can submit (LESSONS #23). Never called by the extension on its own.
+async function focusWorkTab() {
+  const tab = await workTab.get();
+  if (!tab) throw new Error('No work tab is set: open a Flow project and press "Use this tab"');
+  const info = await chrome.tabs.get(tab.tabId).catch(() => null);
+  await chrome.tabs.update(tab.tabId, { active: true });
+  if (info?.windowId != null) await chrome.windows.update(info.windowId, { focused: true });
+  return { tabId: tab.tabId };
+}
+
 // Messages from the popup and (step 3) the dashboard. Content scripts never send commands.
 const fromDashboard = (sender) => !!sender?.url?.startsWith(chrome.runtime.getURL('dashboard/'));
 
 const handlers = {
   async status() {
+    const jobs = await store.list();
+    const boundTab = await workTab.get();
+    const approved = jobs.filter((j) => j.state === 'approved');
+    const approvedHere = boundTab ? approved.filter((j) => j.projectId === boundTab.projectId) : [];
+    // "Waiting" is what the person can act on: approved jobs that cannot submit until the Flow tab
+    // is in front. With no work tab, every approved job is waiting for one.
+    const waitingFor = !boundTab
+      ? (approved.length ? { reason: 'no-work-tab', count: approved.length } : null)
+      : (approvedHere.length ? { reason: 'front-tab', count: approvedHere.length } : null);
     return {
       session: await store.session(),
-      jobs: await store.list(),
-      workTab: await workTab.get(),
+      jobs,
+      workTab: boundTab,
       selfCheck: await local.get('flowpilot.selfCheck', null),
       lastTick: await local.get('flowpilot.lastTick', null),
       helper: { connected: bridge.connected },
+      counts: { awaitingPreview: awaitingPreviewCount(jobs), approved: approved.length },
+      waitingFor,
     };
   },
   async useTab({ tabId }) {
@@ -334,6 +402,7 @@ const handlers = {
   },
   selfCheck: async ({ tabId }) => selfCheck(tabId),
   addJob: async ({ spec }) => addJob(spec),
+  previewJob: async ({ spec }) => addPreviewJob(spec),
   // Storyboard import: preview plans and prices; import validates all rows again and refuses the
   // whole batch on any bad row, so a partial import can never happen (decision 3).
   previewImport: async ({ text, filename, template, presetId }) => {
@@ -390,6 +459,13 @@ const handlers = {
   cancel: async ({ id }) => store.apply(id, { type: 'cancel' }),
   requeue: async ({ id }) => store.apply(id, { type: 'requeue' }),
   retryDownload: async ({ id }) => store.apply(id, { type: 'retryDownload' }),
+  // Bringing the work tab forward is the person's action (popup and dashboard), never an agent's.
+  focusWorkTab: async () => focusWorkTab(),
+  // The free-then-paid step: only the dashboard approves the still and lets the video spend.
+  async promotePreview({ id }, sender) {
+    if (!fromDashboard(sender)) throw new Error('Only the dashboard can approve a still preview');
+    return promotePreview(id);
+  },
   // Dashboard-only (docs/SPEC.md decision 8): agents and the popup cannot set the cap or un-halt.
   async setCap({ cap }, sender) {
     if (!fromDashboard(sender)) throw new Error('Only the dashboard can set the credit cap');

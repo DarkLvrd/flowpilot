@@ -105,3 +105,28 @@ test('safeName keeps dots, dashes and spaces and caps the length', () => {
   assert.equal(safeName('a.b-c d.mp4'), 'a.b-c d.mp4');
   assert.equal(safeName('x'.repeat(300)).length, 120);
 });
+
+// Preview-first (lib/preview.js): the video is created before its still exists, so buildJob is
+// asked to hold the first frame. The job must still be priced as the Frames recipe it will run,
+// with no first frame attached yet, and must refuse anything that contradicts the still.
+test('holdFirstFrame builds a Frames video with no first frame, priced as the frames recipe it will run', () => {
+  const job = build({ name: 'film' }, { holdFirstFrame: true });
+  assert.equal(job.settings.input, 'frames');
+  assert.equal(job.settings.firstFrame, null);
+  assert.equal(job.referencePlan.input, 'frames');
+  assert.equal(job.referencePlan.firstFrame, null);
+  assert.equal(job.recipe, 'abra_i2v_4s_360p');
+  assert.equal(job.expectedCost, 4);
+});
+
+test('holdFirstFrame keeps an end frame, classifying it like any other frame reference', () => {
+  const job = build({ name: 'film', lastFrame: '63078305-0723-426c-ab9f-36657a5e0801' }, { holdFirstFrame: true });
+  assert.deepEqual(job.referencePlan.lastFrame, { kind: 'mediaId', mediaId: '63078305-0723-426c-ab9f-36657a5e0801' });
+  assert.equal(job.recipe, 'omni_flash_i2v_4s_first_last_360p');
+});
+
+test('holdFirstFrame refuses ingredient references, a given first frame, and a non-video kind', () => {
+  assert.throws(() => build({ name: 'x', refs: ['1037d045-1d92-4e1e-a0f7-b695b9ed1372'] }, { holdFirstFrame: true }), /Frames, not ingredient/);
+  assert.throws(() => build({ name: 'x', firstFrame: '1037d045-1d92-4e1e-a0f7-b695b9ed1372' }, { holdFirstFrame: true }), /first frame from the still/);
+  assert.throws(() => build({ name: 'x', kind: 'image' }, { holdFirstFrame: true }), /Only a video job/);
+});

@@ -5,33 +5,47 @@
 // RPC and the store live in the caller.
 
 import { recipeFor, creditCost } from './catalog.js';
-import { validateReferences } from './refs.js';
+import { validateReferences, classifyRef } from './refs.js';
 import { applyNameTemplate } from './naming.js';
 
 const VIDEO_EXT = /\.mp4$/i;
 const IMAGE_EXT = /\.(png|jpe?g|webp)$/i;
 
+// A preview-first video is created before its first frame exists; this stands in for the still only
+// while the Frames recipe is priced. It is never stored on the job (the reference plan holds null).
+const HELD_FIRST_FRAME = 'the approved still';
+
 export const safeName = (s) => String(s).replace(/[^\w.\- ]+/g, '_').trim().slice(0, 120) || 'untitled';
 
 // `spec` is the raw input; `opts` is { projectId, recipes (a parsed catalog Map or null), template,
-// index, total, scene }. Returns every job field except the state-machine ones (id, state, times,
-// history) — those belong to the store. Throws a human-readable Error for anything invalid.
-export function buildJob(spec = {}, { projectId, recipes = null, template = null, index = null, total = null } = {}) {
+// index, total, scene, holdFirstFrame }. Returns every job field except the state-machine ones (id,
+// state, times, history) — those belong to the store. Throws a human-readable Error for anything
+// invalid. `holdFirstFrame` (preview-first, see lib/preview.js) builds a Frames video whose first
+// frame is chosen later: it skips the "needs a first frame" check and prices the Frames recipe the
+// job will run once the approved still is attached, leaving referencePlan.firstFrame null.
+export function buildJob(spec = {}, { projectId, recipes = null, template = null, index = null, total = null, holdFirstFrame = false } = {}) {
   if (!/^[0-9a-f-]{36}$/.test(String(projectId ?? ''))) throw new Error('Bad project id');
 
   const prompt = String(spec.prompt ?? '').replace(/\r\n?/g, '\n').trim();
   if (!prompt) throw new Error('Prompt is empty');
 
   const kind = spec.kind ?? 'video';
+  if (holdFirstFrame) {
+    if (kind !== 'video') throw new Error('Only a video job can be held for a still preview');
+    if ((spec.refs?.length ?? 0) > 0) throw new Error('A still preview uses Frames, not ingredient references');
+    if (spec.firstFrame != null) throw new Error('A still preview builds the first frame from the still; do not give a first frame');
+  }
   const hasRefFields = (spec.refs?.length ?? 0) > 0 || spec.firstFrame != null || spec.lastFrame != null;
   if (kind !== 'video' && hasRefFields) {
     throw new Error('References (Ingredients and Frames) are for video jobs; image reference support is not wired yet');
   }
   // Infer the input when it isn't named: a frame field means Frames, references mean Ingredients,
   // otherwise plain text. validateReferences throws a clear error on a bad reference.
-  const rawInput = spec.input ?? (spec.firstFrame != null || spec.lastFrame != null ? 'frames' : (spec.refs?.length ? 'ingredients' : 'text'));
+  const rawInput = holdFirstFrame ? 'frames' : (spec.input ?? (spec.firstFrame != null || spec.lastFrame != null ? 'frames' : (spec.refs?.length ? 'ingredients' : 'text')));
   const referencePlan = kind === 'video'
-    ? validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame })
+    ? (holdFirstFrame
+        ? { input: 'frames', ingredients: [], firstFrame: null, lastFrame: spec.lastFrame == null || spec.lastFrame === '' ? null : classifyRef(spec.lastFrame) }
+        : validateReferences({ input: rawInput, refs: spec.refs ?? [], firstFrame: spec.firstFrame, lastFrame: spec.lastFrame }))
     : { input: 'text', ingredients: [], firstFrame: null, lastFrame: null };
 
   const durationS = Number(spec.durationS ?? 4);
@@ -60,7 +74,7 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   if (!['16:9', '9:16'].includes(settings.aspect)) throw new Error(`Unsupported aspect: ${settings.aspect}`);
   if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
 
-  const recipe = recipeFor(settings);
+  const recipe = recipeFor(holdFirstFrame ? { ...settings, firstFrame: HELD_FIRST_FRAME } : settings);
   const unit = recipes ? creditCost(recipes, recipe) : null;
   const expectedCost = unit == null ? null : unit * settings.count;
   const modelFamily = recipes?.get(recipe)?.family ?? null;
