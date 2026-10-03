@@ -74,13 +74,17 @@ export function referenceNames(media, ids) {
   return names;
 }
 
-// After an upload the new media appears in Zzl0ze as a record that was not there before. Given the
-// media lists (from parseProjectMedia) captured before and after, return the one new media id, or
-// fail closed — never attach the wrong reference when zero or several appeared (docs/LESSONS.md #13).
-export function newlyUploadedId(before, after) {
+// After an upload the new media appears in Zzl0ze under its file name as an image record that was
+// not there before. Given the media lists (from parseProjectMedia) captured before and after and
+// the uploaded file's `name`, return that upload's media id, or fail closed. Matching by name and
+// image kind (not "exactly one new record") means a shared project staying busy — another worker's
+// upload or a render finishing mid-upload — no longer over-counts and fails the job (docs/LESSONS.md
+// #13). Still fails closed when the name is ambiguous (several fresh images share it) or absent.
+export function newlyUploadedId(before, after, name) {
   const had = new Set(before.map((m) => m.mediaId));
-  const fresh = after.filter((m) => !had.has(m.mediaId)).map((m) => m.mediaId);
-  if (fresh.length === 0) throw new Error('Upload not visible yet: no new media in the project');
-  if (fresh.length > 1) throw new Error(`Expected one new media after the upload, found ${fresh.length}`);
-  return fresh[0];
+  const fresh = after.filter((m) => !had.has(m.mediaId));
+  const matches = fresh.filter((m) => m.kind === 'image' && m.prompt === name);
+  if (matches.length > 1) throw new Error(`Several new media are named "${name}"; the upload is ambiguous, cannot tell which to attach`);
+  if (matches.length === 0) throw new Error(`Upload not visible yet: no new image named "${name}" in the project`);
+  return matches[0].mediaId;
 }

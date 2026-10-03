@@ -66,11 +66,26 @@ test('referenceNames maps media ids to their Zzl0ze names (the driver matches pi
   assert.ok(!('ffffffff-ffff-4fff-8fff-ffffffffffff' in names)); // unknown id omitted -> driver fails closed
 });
 
-test('newlyUploadedId returns the single new media id after an upload, else fails closed', () => {
-  const after = parseProjectMedia(parseBatchResponse(fixture('Zzl0ze'), 'Zzl0ze').data);
-  const before = after.filter((m) => m.mediaId !== ID);
-  assert.equal(newlyUploadedId(before, after), ID);
-  assert.throws(() => newlyUploadedId(after, after), /no new media/i);
-  const twoNew = after.filter((m) => m.mediaId === ID);
-  assert.throws(() => newlyUploadedId([], twoNew.concat(after.filter((m) => m.mediaId === ID2))), /one new media/i);
+test('newlyUploadedId finds the upload by its file name and image kind, else fails closed', () => {
+  const rec = (mediaId, kind, prompt) => ({ mediaId, kind, prompt });
+  const existing = rec('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'image', 'old photo');
+  const upload = rec('11111111-1111-4111-8111-111111111111', 'image', 'face.png');
+  const before = [existing];
+
+  // Plain case: the uploaded image appears under its file name.
+  assert.equal(newlyUploadedId(before, [existing, upload], 'face.png'), upload.mediaId);
+
+  // Busy shared project: an unrelated video render lands during the upload (LESSONS #13, finding
+  // #2). The old "exactly one new record" rule would over-count and fail; the name + image-kind
+  // match still picks the upload.
+  const render = rec('22222222-2222-4222-8222-222222222222', 'video', 'someone else’s clip');
+  assert.equal(newlyUploadedId(before, [existing, render, upload], 'face.png'), upload.mediaId);
+
+  // Not visible yet: nothing new, or only unrelated media landed — retryable, fails closed.
+  assert.throws(() => newlyUploadedId(before, [existing], 'face.png'), /not visible/i);
+  assert.throws(() => newlyUploadedId(before, [existing, render], 'face.png'), /not visible/i);
+
+  // Ambiguous: two fresh images share the uploaded name — never guess which to attach.
+  const dup = rec('33333333-3333-4333-8333-333333333333', 'image', 'face.png');
+  assert.throws(() => newlyUploadedId(before, [existing, upload, dup], 'face.png'), /ambiguous|several|cannot tell/i);
 });

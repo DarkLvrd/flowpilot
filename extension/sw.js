@@ -105,13 +105,13 @@ async function projectMediaList(projectId) {
 
 // Polls Zzl0ze until the uploaded media shows up (LESSONS #13: read the id from Zzl0ze, never wait
 // for the grid). No fixed sleep before an action — this waits on real Zzl0ze responses.
-async function pollNewMediaId(projectId, before, { tries = 40, everyMs = 3000 } = {}) {
+async function pollNewMediaId(projectId, before, name, { tries = 40, everyMs = 3000 } = {}) {
   for (let i = 0; i < tries; i++) {
     await new Promise((res) => setTimeout(res, everyMs));
     const after = await projectMediaList(projectId);
-    try { return newlyUploadedId(before, after); } catch { /* not visible yet, or several appeared */ }
+    try { return newlyUploadedId(before, after, name); } catch { /* not visible yet, or name ambiguous */ }
   }
-  throw new Error('The uploaded reference did not appear in the project in time');
+  throw new Error(`The uploaded reference "${name}" did not appear in the project in time`);
 }
 
 // Turns a job's classified referencePlan into media ids: existing ids pass through; a local path is
@@ -127,7 +127,7 @@ const refs = {
       const media = await bridge.request('readMedia', { path: ref.path });
       const before = await projectMediaList(tab.projectId);
       await driver.uploadFile(tab.tabId, media.data, media.name, IMAGE_MIME[media.type] ?? `image/${media.type}`);
-      const id = await pollNewMediaId(tab.projectId, before);
+      const id = await pollNewMediaId(tab.projectId, before, media.name);
       await driver.closePicker(tab.tabId).catch(() => {});
       return id;
     };
