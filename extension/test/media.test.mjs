@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
-import { parseProjectMedia, parseMediaDetail, findResult } from '../lib/media.js';
+import { parseProjectMedia, parseMediaDetail, parseEntities, characterUsed, findResult } from '../lib/media.js';
 import { fixture } from './helpers.mjs';
 
 const PROJECT = '78d6e0a5-3e82-4491-9f47-6755a6b4c173';
@@ -80,6 +80,73 @@ test('media detail gives the URL of the kind asked for: the video, not its poste
 
 // The prompt's rich-text form is [[["prompt"]]]: exactly one string inside. A nested list that
 // merely starts with a string (a recipe entry, say) is not the prompt.
+// ---- Flow Characters (report §2, §5; data/flowpilot-flow-characters/report.md) ------------------
+
+const ENTITY = '0bfec740-409e-42f5-80d1-82baac3349f3';
+const PRIMARY = 'b7df06ca-68ed-46ad-8ce2-b3bf3c08e1ca';
+const REF_WORKFLOW = 'e3696fd0-eb73-4b82-a8a2-096fa4cb0dde';
+const CHAR_PROJECT = 'de7baa89-1896-4825-bf06-ab0853619277';
+const charInner = parseBatchResponse(fixture('Zzl0ze-characters'), 'Zzl0ze').data;
+
+// The verbatim entity record the report captured, at response field 6 (JSON index 5).
+test('parseEntities reads the character list out of the project contents', () => {
+  const entities = parseEntities(charInner);
+  assert.equal(entities.length, 1);
+  assert.deepEqual(entities[0], {
+    entityId: ENTITY,
+    projectId: CHAR_PROJECT,
+    name: 'nancy',
+    primaryMediaId: PRIMARY,
+    referenceWorkflowIds: [REF_WORKFLOW],
+  });
+});
+
+// Zero characters is the normal case (18 of 19 projects in the recon), and it is an empty list,
+// not an error: a field that is absent or null says "this project has no characters".
+test('a project with no characters reads as an empty list, a shapeless payload still errors', () => {
+  assert.deepEqual(parseEntities([null, [], [], [], null, null]), []);
+  assert.deepEqual(parseEntities([null, [], []]), []);
+  assert.throws(() => parseEntities({}), /Flow changed/);
+  assert.throws(() => parseEntities([null, [], [], [], null, 'not a list']), /Flow changed/);
+});
+
+// Fail closed: a node that does not look like a CHARACTER entity is skipped rather than guessed
+// at — a wrong entityId would attach the wrong subject and the credits would still be spent.
+test('parseEntities skips records that are not CHARACTER entities, and never invents an id', () => {
+  const other = [CHAR_PROJECT, ENTITY, null, [2, 'a car', []], PRIMARY, [1, 1], [1, 0], [1, 0]];
+  const noName = [CHAR_PROJECT, ENTITY, null, [1, '', []], PRIMARY, [1, 1], [1, 0], [1, 0]];
+  const noId = [CHAR_PROJECT, 'not-an-id', null, [1, 'nancy', []], PRIMARY, [1, 1], [1, 0], [1, 0]];
+  assert.deepEqual(parseEntities([null, [], [], [], null, [other, noName, noId, 'x', null]]), []);
+  // A character with no primary image / no reference workflows is still a character.
+  const bare = [CHAR_PROJECT, ENTITY, null, [1, 'nancy', [[[]]]], null, null, null, null];
+  assert.deepEqual(parseEntities([null, [], [], [], null, [bare]]), [
+    { entityId: ENTITY, projectId: CHAR_PROJECT, name: 'nancy', primaryMediaId: null, referenceWorkflowIds: [] },
+  ]);
+});
+
+// Report §5: the finished generation's own record echoes the character back — a mention segment in
+// the prompt content and an entity-reference list. This is what the QC card states as verified.
+test('a record reads back the entity mention and the entity-reference list', () => {
+  const record = parseProjectMedia(charInner).find((m) => m.entityMentions.length || m.entityRefs.length);
+  assert.deepEqual(record.entityMentions, [{ entityId: ENTITY, name: 'nancy' }]);
+  assert.deepEqual(record.entityRefs, [ENTITY]);
+  assert.equal(record.recipe, 'abra_r2v_4s_360p');
+  // The prompt of a mention job is the full text Flow stored, chip text included (double space).
+  assert.equal(record.prompt, "nancy  is in a Formula One car because this is her first time and she's looking kind of scared.");
+});
+
+test('characterUsed confirms only the character the record actually shows', () => {
+  const record = parseProjectMedia(charInner).find((m) => m.entityMentions.length);
+  assert.deepEqual(characterUsed(record, [{ entityId: ENTITY, name: 'nancy' }]), { entityId: ENTITY, name: 'nancy' });
+  // A job that expected another character, or expected none, is not confirmed by this record.
+  assert.equal(characterUsed(record, [{ entityId: '11111111-1111-4111-8111-111111111111', name: 'rudy' }]), null);
+  assert.equal(characterUsed(record, []), null);
+  assert.equal(characterUsed(record, null), null);
+  // An entity-reference list alone (a chip-only attach, unverified on the wire) still confirms the id.
+  const refOnly = { entityMentions: [], entityRefs: [ENTITY] };
+  assert.deepEqual(characterUsed(refOnly, [{ entityId: ENTITY, name: 'nancy' }]), { entityId: ENTITY, name: 'nancy' });
+});
+
 test('the verbatim prompt is the one-string [[["…"]]] node, not any nested list that starts with a string', () => {
   const MID = '11111111-1111-1111-1111-111111111111';
   const WID = '22222222-2222-2222-2222-222222222222';

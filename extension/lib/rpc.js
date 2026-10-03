@@ -11,6 +11,12 @@ export const RPC = {
   mediaDetail: 'as29s',    // ["<mediaId>"] → media record incl. signed flow-content.google URL
 };
 
+// Fields inside the RPC.projectMedia (`Zzl0ze`) payload that a reader depends on. These are not rpc
+// ids but indices inside a response Flow Pilot already fetches, so they live here for the same
+// reason the ids do: Flow ships weekly and indices drift (docs/LESSONS.md #20). A reader that finds
+// something other than a list at `entities` treats it as "Flow changed" rather than guessing.
+export const PROJECT_MEDIA_FIELD = { entities: 5 }; // [ … , [entity record, …] ] — the project's Flow Characters
+
 export const BATCHEXECUTE_PATH = '/_/AiSandboxAngularFrontend/data/batchexecute';
 
 // Any of these anywhere in a response halts every job (docs/SPEC.md hard rules).
