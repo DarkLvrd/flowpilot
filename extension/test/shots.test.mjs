@@ -279,6 +279,25 @@ test('a video job is never built until the shot\'s still is approved', () => {
   assert.throws(() => materializeShot(shot, [], { projectId: PID, recipes }), /approve|still/i);
 });
 
+test('a shot whose still exists is told to approve it, never to queue a second still', () => {
+  // The card above an unapproved shot shows its still job (`done (e327fb4f…)`, or `rendering`), so
+  // the gate must read the shoot's own still job: saying "has no still yet: queue one" next to a
+  // finished still could spend a second free still on a shot that already has one (report §10 D).
+  const finished = stillGate(baseShot({ still: { jobId: 'e327fb4f-0000-4000-8000-000000000000', mediaId: null } }), []);
+  assert.equal(finished.ok, false);
+  assert.doesNotMatch(finished.problems.join(' '), /has no still yet|flowpilot still/);
+  assert.match(finished.problems.join(' '), /not approved yet/);
+
+  const rendering = stillGate(baseShot({ still: { jobId: 'still-job-2', mediaId: null } }), []);
+  assert.doesNotMatch(rendering.problems.join(' '), /has no still yet|flowpilot still/);
+  assert.equal(rendering.problems.length, 1, `one honest problem, not two: ${rendering.problems.join('; ')}`);
+
+  // A shot with no still job at all is the only one that gets the invitation — and it gets one.
+  const none = stillGate(baseShot({ still: { jobId: null, mediaId: null } }), []);
+  assert.match(none.problems.join(' '), /has no still yet: queue one with `flowpilot still shot_4`/);
+  assert.equal(none.problems.filter((p) => /has no still yet/.test(p)).length, 1, `one invitation: ${none.problems.join('; ')}`);
+});
+
 test('approving a still records who, when and which media id, and sets the anchor', () => {
   const shot = baseShot();
   const { shot: next, approvals, entry } = approveStill(shot, [], { mediaId: MEDIA.still, jobId: 'still-job', approvedBy: 'dashboard', note: 'looks right', at: 1234 });

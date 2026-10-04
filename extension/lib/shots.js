@@ -281,7 +281,11 @@ export function stillGate(shot, approvals = []) {
   const declared = shot.anchor?.startFrameMediaId ?? null;
   const problems = [];
 
-  if (current == null && declared == null) problems.push(`Shot ${shot.id} has no still yet: queue one with \`flowpilot still ${shot.id}\``);
+  // Only a shot with no still job at all invites queueing one. A `shot.still.jobId` is written by
+  // import and `queueStill`, so a still that exists — finished or still rendering — must not be told
+  // "has no still yet": that wording sits next to a card already showing `done (…)` and invites a
+  // second free still (report §10 fault D). The approval line below says what is really missing.
+  if (current == null && declared == null && !shot.still?.jobId) problems.push(`Shot ${shot.id} has no still yet: queue one with \`flowpilot still ${shot.id}\``);
   if (!start) problems.push(`The still for shot ${shot.id} is not approved yet`);
   else if (current != null && start.mediaId !== current) {
     problems.push(`The approved still ${start.mediaId} has been replaced by a new still ${current}; approve the new one`);
