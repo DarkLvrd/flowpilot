@@ -53,24 +53,37 @@ export function createShotsPanel(root) {
     return el('p', {}, input, ' ', use);
   }
 
-  async function thumbnail(mediaId) {
-    if (!mediaId) return null;
-    if (!thumbs.has(mediaId)) {
-      thumbs.set(mediaId, null);
-      try {
-        const { url } = await send('stillThumb', { projectId: project, mediaId });
-        thumbs.set(mediaId, url);
-      } catch (e) {
-        thumbs.set(mediaId, null); // fall back to the id text; never break the panel
-      }
-    }
-    const url = thumbs.get(mediaId);
-    if (!url) return el('code', { textContent: mediaId, style: 'font-size:11px' });
+  const idText = (mediaId) => el('code', { textContent: mediaId, style: 'font-size:11px' });
+
+  function stillPicture(url, mediaId) {
     const img = el('img', { src: url, alt: `still ${mediaId}`, loading: 'lazy', style: 'max-width:96px;max-height:60px;border-radius:4px' });
     // A signed URL can expire or fail; fall back to the id text rather than a broken-image icon.
-    const fallback = el('code', { textContent: mediaId, style: 'font-size:11px' });
+    const fallback = idText(mediaId);
     img.onerror = () => img.replaceWith(fallback);
     return el('a', { href: url, target: '_blank', rel: 'noreferrer' }, img);
+  }
+
+  // The cell gets a node *now* and the picture lands inside it when the read resolves: the read is a
+  // round trip, and appending the promise it returns is what put the text `[object Promise]` on the
+  // card where an approved still's thumbnail belongs (report §10 fault C). Until it lands the media
+  // id is the honest placeholder, and a failed read leaves it there instead of breaking the row.
+  function thumbnail(mediaId) {
+    if (!mediaId) return null;
+    const holder = el('span', {});
+    if (thumbs.has(mediaId)) {
+      const url = thumbs.get(mediaId);
+      holder.append(url ? stillPicture(url, mediaId) : idText(mediaId));
+      return holder;
+    }
+    thumbs.set(mediaId, null);
+    holder.append(idText(mediaId));
+    send('stillThumb', { projectId: project, mediaId })
+      .then(({ url }) => {
+        thumbs.set(mediaId, url ?? null);
+        if (url) holder.replaceChildren(stillPicture(url, mediaId));
+      })
+      .catch(() => { /* the id text stays; a failed read never breaks the panel */ });
+    return holder;
   }
 
   function stillCell(shot) {
