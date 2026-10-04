@@ -471,6 +471,38 @@
     await waitFor(() => radio(name)?.checked, { what: `"${name}" to be selected` });
   }
 
+  // ---- The model family: Flow's own `Select model family` menu (live 2026-10-04) ----------------
+  //
+  // The button (aria-label `Select model family`) shows the family Flow is currently on, e.g.
+  // `🍌 Nano Banana 2`. Opening it renders a mat-menu of `flow-menu-item`s, one per family, the
+  // current one marked `selected`, each item's own visible text exactly the family name the catalog
+  // knows. A job may name its Flow image model (`settings.model` → `job.modelFamily`); when the
+  // account is on a different one this selects the job's through Flow's own menu — the same careful
+  // click as every other control — instead of failing with a bare mismatch (report §4a, BUG-A).
+  const modelMenu = () => $$('.cdk-overlay-pane').find((p) => p.offsetParent !== null && $$('flow-menu-item', p).length > 0) || null;
+  const modelButton = () => button(NAMES.model);
+
+  async function selectModelFamily(want) {
+    const btn = modelButton();
+    if (!btn) throw new Error("Flow's model button is not on the page; open Flow's settings panel to read or change the model");
+    const current = visibleText(btn);
+    if (current === want) return null; // already on the job's model: no click, nothing changes
+    if (!clickable(btn)) throw new Error(`Flow's model button ("${current}") is not clickable, so the job's model "${want}" cannot be selected`);
+    btn.click();
+    const menu = await waitFor(modelMenu, { what: "Flow's model menu" });
+    const items = $$('flow-menu-item', menu);
+    const item = items.find((el) => visibleText(el) === want);
+    if (!item) throw new Error(`Flow's model menu does not offer "${want}" (it offers ${items.map(visibleText).filter(Boolean).join(', ') || 'nothing'}); pick one of those in Flow, or name a model the catalog knows on the job`);
+    const target = $$('[role=menuitem], button, [role=button]', item)[0] || item;
+    if (!clickable(target)) throw new Error(`The model menu item "${want}" is not clickable`);
+    target.click();
+    await waitFor(() => visibleText(modelButton()) === want, { what: `Flow's model to become "${want}"` });
+    // The menu animates closed; an overlay left open over the composer is what the pre-spend check
+    // refuses, so wait for it to be really gone before carrying on.
+    await waitFor(() => !modelMenu(), { what: 'the model menu to close' });
+    return current;
+  }
+
   // Sets the composer to the job, reads everything back, leaves the settings panel closed.
   async function prepare(job) {
     const s = job.settings;
@@ -495,6 +527,11 @@
     }
     await choose(s.aspect);
     await choose(`x${s.count}`);
+    // An image job may name the Flow image model it wants (`settings.model`). When the account is on
+    // a different one, select the job's through Flow's own menu instead of failing with a bare
+    // mismatch (report §4a, BUG-A). Scoped to image jobs: a video's model family decides what the
+    // clip costs, so that stays the person's choice and the pre-spend check still refuses a mismatch.
+    const modelWas = s.kind === 'image' && job.modelFamily ? await selectModelFamily(job.modelFamily) : null;
     const withPanel = readPage();
     const model = visibleText(button(NAMES.model)) || null;
     await closeSettings();
@@ -521,7 +558,7 @@
     after.characterTokens = characterTokens;
     after.mentions = readMentions();
     // Mode radios, model and cost are only visible with the panel open; the rest is read after closing.
-    return { ...after, input: withPanel.input, modeKind: withPanel.modeKind, costText: withPanel.costText, model };
+    return { ...after, input: withPanel.input, modeKind: withPanel.modeKind, costText: withPanel.costText, model, ...(modelWas ? { modelWas } : {}) };
   }
 
   // `expect` is what the pre-spend check approved ({ url, prompt, summaryText }). Everything is
@@ -553,9 +590,9 @@
 
   const inFront = () => document.visibilityState === 'visible';
 
-  // `attachReferences` and `readPage` are exposed for the driver test and the live rehearsal harness
-  // (recon/dry-run.mjs); prepare is their only caller in the extension itself.
-  const api = { selfCheck, readPage, prepare, clickGenerate, inFront, uploadFile, closePicker, attachReferences };
+  // `attachReferences`, `readPage` and `selectModelFamily` are exposed for the driver test and the
+  // live rehearsal harness (recon/dry-run.mjs); prepare is their only caller in the extension itself.
+  const api = { selfCheck, readPage, prepare, clickGenerate, inFront, uploadFile, closePicker, attachReferences, selectModelFamily };
   globalThis.__flowPilotDriver = api; // isolated world only; the page cannot see it
 
   if (globalThis.chrome?.runtime?.onMessage) {

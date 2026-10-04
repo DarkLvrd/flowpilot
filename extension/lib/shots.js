@@ -214,7 +214,9 @@ export function shotComposeInput(shot, library = null) {
 
 const shotName = (shot, suffix = '') => `${shot.name ?? shot.id}${suffix}`;
 
-// The still job's spec: a free Nano Banana image of the same frame, carrying the shot's refs.
+// The still job's spec: a free Nano Banana image of the same frame, carrying the shot's refs. The
+// shot's `model` names the Flow image model; when it is absent the still rides on whatever image
+// model the account is on (report §4a), and the driver leaves Flow's own menu alone.
 // Callers run it through lib/jobspec.js buildJob (the one validation path) and the catalog.
 export function stillJobSpec(shot, { library = null } = {}) {
   validateShot(shot);
@@ -226,6 +228,7 @@ export function stillJobSpec(shot, { library = null } = {}) {
     promptParts: shot.promptParts,
     entities: (shot.entities ?? []).map(composedEntity),
     ...(refs.length ? { refs } : {}),
+    ...(shot.model ? { model: shot.model } : {}),
     ...(shot.resolution ? { resolution: shot.resolution } : {}),
     ...(shot.aspect ? { aspect: shot.aspect } : {}),
     ...(shot.count ? { count: shot.count } : {}),
@@ -369,6 +372,11 @@ const KEY_ALIASES = {
   duration: 'durationS', durations: 'durationS', durationsec: 'durationS', seconds: 'durationS', secs: 'durationS',
   aspect: 'aspect', ratio: 'aspect', count: 'count', n: 'count',
   outputpath: 'outputPath', output: 'outputPath', out: 'outputPath', path: 'outputPath',
+  // The still's own Flow image model (`nano-banana-pro`, `nano-banana-2`, `nano-banana-2-lite`).
+  // Left out, the still runs on whatever image model the account is on. Nothing in the shots path
+  // could name one before, so every still was built with the catalog's default and refused on an
+  // account whose Flow model differed (report §4a, BUG-A).
+  model: 'model',
   'camera.shottype': 'camera.shotType', 'camera.moveid': 'camera.moveId', 'camera.note': 'camera.note',
   camera: 'camera', shottype: 'camera.shotType', moveid: 'camera.moveId',
   qc: 'qc',
@@ -484,6 +492,9 @@ export function planShotImport({ text, filename = '', rows: given = null, projec
         entities, stillEntities: stillSource.length ? stillSource : entities.filter((e) => roleOf(e) === 'inFrame'),
         mode, anchor: { startFrameMediaId: startFrame, endFrameMediaId: anchorFrom(row.anchor?.endFrame, row, knownStill) },
         still: { jobId: null, mediaId: null }, videoJobIds: [], qc: row.qc ?? null,
+        // The still's image model (null = Flow's own current model). The video's model family is
+        // Flow's own choice for the recipe and is not set here.
+        model: row.model ?? null,
         outputPath: row.outputPath ?? null, stillOutputPath: row.still?.outputPath ?? null,
         history: [],
       };
@@ -500,7 +511,7 @@ export function planShotImport({ text, filename = '', rows: given = null, projec
       // free — so neither the still's 0 credits nor the video's price is claimed here. The import
       // still plans; both are priced again before anything is clicked (report §10 #9).
       if (!recipes) warnings.push('the model catalog is unavailable: the still could not be checked for 0 credits and the video is priced at approval');
-      else if (stillJob.expectedCost !== 0) throw new Error(`A still must be free: ${stillJob.recipe} reports ${stillJob.expectedCost} credits`);
+      else if (stillJob.expectedCost !== 0) throw new Error(`A still must be free: ${stillJob.recipe ?? "Flow's current image model"} reports ${stillJob.expectedCost} credits`);
       if (startFrame) warnings.push(`the declared start frame ${startFrame} is not approved yet; the video is created only after you approve a still for this shot`);
       rows.push({ index, scene: shot.scene, name: shot.name, ok: true, error: null, warnings, shot, stillJob, cost, videoCost: cost, stillCost: 0 });
     } catch (e) {

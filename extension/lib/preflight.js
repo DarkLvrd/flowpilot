@@ -35,6 +35,8 @@ export function parseCostLine(text = '') {
 }
 
 // job:    { tabId, projectId, prompt, settings, expectedCost (number | null), modelFamily (catalog name | null),
+//           modelAccountDefault? (true for an image job that named no model), imageModelFamilies? (the
+//           image families the catalog knows),
 //           references? { input, ingredients: [mediaId], firstFrame: mediaId|null, lastFrame: mediaId|null,
 //                         characters: [{ entityId, name }] } }
 // page:   { tabId, url, prompt, summary, modeKind, input, model, cost, generateEnabled, overlayOpen,
@@ -59,8 +61,16 @@ export function checkBeforeSpend(job, page, budget) {
   if (shown.kind !== s.kind) problems.push(`kind is ${shown.kind}, job wants ${s.kind}`);
   if (shown.aspect !== s.aspect) problems.push(`aspect is ${shown.aspect}, job wants ${s.aspect}`);
   if (shown.count !== s.count) problems.push(`count is ${shown.count}, job wants ${s.count}`);
-  // The model decides the price; the catalog's family name is what the model button shows.
-  if (job.modelFamily == null) problems.push('the job has no known model (the catalog could not be read when it was added)');
+  // The model decides the price. A job that names its own image model must see that model on Flow's
+  // own button. A job that rides on the account's current image model (an image job with no model
+  // named, report §4a) accepts whatever Flow shows, as long as it is one of the image families the
+  // catalog knows — and the cost line below still has to match, so an unknown paid model cannot
+  // slip through. `modelFamily == null` on any other job means the catalog could not be read.
+  if (job.modelAccountDefault) {
+    const families = job.imageModelFamilies ?? [];
+    if (!families.length) problems.push('the image job uses Flow\'s own image model, but this build\'s catalog knows no image models to check it against; rebuild the catalog (Flow may have changed) or name the model on the job');
+    else if (!families.includes(page.model)) problems.push(`Flow's image model is ${page.model}, which this build does not know (it knows ${families.join(', ')}); pick one of those in Flow's own model menu, or name the model on the job`);
+  } else if (job.modelFamily == null) problems.push('the job has no known model (the catalog could not be read when it was added)');
   else if (page.model !== job.modelFamily) problems.push(`model is ${page.model}, job wants ${job.modelFamily}`);
   if (s.kind === 'video') {
     if (shown.resolution !== s.resolution) problems.push(`resolution is ${shown.resolution}, job wants ${s.resolution}`);

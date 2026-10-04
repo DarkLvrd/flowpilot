@@ -378,6 +378,8 @@ $('add').onsubmit = act(async (ev) => {
   // infers the input mode (Ingredients vs Frames vs plain text) and validates the references.
   const refs = (f.refs ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
   const spec = { name: f.name, prompt: f.prompt, resolution: f.resolution, durationS: Number(f.durationS), aspect: f.aspect, count: Number(f.count) };
+  // The still's Flow image model (image jobs, and a preview-first still); empty = the account's own.
+  if (f.model && (f.kind === 'image' || f.preview)) spec.model = f.model;
   if (refs.length) spec.refs = refs;
   if (f.firstFrame?.trim()) spec.firstFrame = f.firstFrame.trim();
   if (f.lastFrame?.trim()) spec.lastFrame = f.lastFrame.trim();

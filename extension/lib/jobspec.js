@@ -4,7 +4,7 @@
 // on weaker terms than a hand-added job (docs/SPEC.md decisions 3, 8). Pure: storage, the catalog
 // RPC and the store live in the caller.
 
-import { recipeFor, creditCost } from './catalog.js';
+import { recipeFor, creditCost, catalogImageModels, accountImageCost } from './catalog.js';
 import { validateReferences, classifyRef } from './refs.js';
 import { applyNameTemplate } from './naming.js';
 
@@ -30,6 +30,12 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   if (!prompt) throw new Error('Prompt is empty');
 
   const kind = spec.kind ?? 'video';
+  // A named model is an *image* model (Flow's own `Select model family` menu in Image mode). A video
+  // runs on the video model Flow's settings imply, and Flow Pilot does not select that one, so a
+  // model on a video job is refused rather than silently ignored.
+  if (kind !== 'image' && spec.model != null && spec.model !== '') {
+    throw new Error('A model can only be named on an image job; a video runs on the Flow video model for its settings (Omni Flash), which Flow Pilot does not choose');
+  }
   if (holdFirstFrame) {
     if (kind !== 'video') throw new Error('Only a video job can be held for a still preview');
     if ((spec.refs?.length ?? 0) > 0) throw new Error('A still preview uses Frames, not ingredient references');
@@ -92,9 +98,17 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   if (![1, 2, 3, 4].includes(settings.count)) throw new Error(`Count must be 1-4, got ${settings.count}`);
 
   const recipe = recipeFor(holdFirstFrame ? { ...settings, firstFrame: HELD_FIRST_FRAME } : settings);
-  const unit = recipes ? creditCost(recipes, recipe) : null;
+  // An image job that names no model rides on Flow's own current image model (report §4a): its cost
+  // is then the one every image model the catalog knows agrees on, and `modelFamily` stays null
+  // because the page, not the job, decides the family. `modelAccountDefault` tells the pre-spend
+  // check to accept and verify Flow's current image model instead of refusing a named one.
+  const accountImageDefault = settings.kind === 'image' && settings.model == null;
+  const unit = recipes
+    ? (accountImageDefault ? accountImageCost(recipes) : creditCost(recipes, recipe))
+    : null;
   const expectedCost = unit == null ? null : unit * settings.count;
-  const modelFamily = recipes?.get(recipe)?.family ?? null;
+  const modelFamily = recipe == null ? null : (recipes?.get(recipe)?.family ?? null);
+  const imageModelFamilies = accountImageDefault && recipes ? catalogImageModels(recipes).map((m) => m.family) : [];
 
   // A row's scene is its label; when a row names only one of scene/name, the other falls back to
   // it. A template that asks for a token neither field provides is refused, never invented.
@@ -147,5 +161,6 @@ export function buildJob(spec = {}, { projectId, recipes = null, template = null
   return {
     name, projectId, prompt, settings, referencePlan, references: null, recipe,
     expectedCost, modelFamily, outputPath, ...(relativePath ? { relativePath } : {}), ...composed,
+    ...(accountImageDefault ? { modelAccountDefault: true, ...(imageModelFamilies.length ? { imageModelFamilies } : {}) } : {}),
   };
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBatchResponse } from '../lib/rpc.js';
-import { parseCatalog, creditCost, recipeFor } from '../lib/catalog.js';
+import { parseCatalog, creditCost, recipeFor, catalogImageModels, accountImageCost } from '../lib/catalog.js';
 import { fixture } from './helpers.mjs';
 
 const catalog = parseCatalog(parseBatchResponse(fixture('HTrJv'), 'HTrJv').data);
@@ -16,6 +16,9 @@ test('reads Omni Flash recipes with their credit costs (recon: 4s 720p = 7, 4s 3
 test('images are free', () => {
   assert.equal(creditCost(catalog, 'NARWHAL'), 0);
   assert.equal(creditCost(catalog, 'GEM_PIX_2'), 0);
+  // Nano Banana 2 Lite is a real image recipe on the catalog even though no job could name it before
+  // (report §4a, BUG-A).
+  assert.equal(creditCost(catalog, 'HARBOR_SEAL'), 0);
 });
 
 test('knows the family and duration of a recipe', () => {
@@ -56,9 +59,32 @@ test('picks the Omni Flash recipe for each video input', () => {
   assert.equal(v('ingredients', { characters: [{ entityId: 'e1', name: 'nancy' }], resolution: '360p' }), 'abra_r2v_4s_360p');
 });
 
-test('picks the image recipe (recon: tiles show Nano Banana 2)', () => {
-  assert.equal(recipeFor({ kind: 'image' }), 'NARWHAL');
+test('picks the image recipe for each model Flow\u2019s own menu offers, and knows Lite (report \u00a74a)', () => {
+  assert.equal(recipeFor({ kind: 'image', model: 'nano-banana-2' }), 'NARWHAL');
   assert.equal(recipeFor({ kind: 'image', model: 'nano-banana-pro' }), 'GEM_PIX_2');
+  assert.equal(recipeFor({ kind: 'image', model: 'nano-banana-2-lite' }), 'HARBOR_SEAL');
+  // No model named: the job rides on whatever image model the account is on, which is not a recipe
+  // Flow Pilot can name. The page decides the family and lib/preflight.js verifies it.
+  assert.equal(recipeFor({ kind: 'image' }), null);
+  // An unknown model fails closed and says what it does know.
+  assert.throws(() => recipeFor({ kind: 'image', model: 'nano-banana-9' }), /knows nano-banana-pro, nano-banana-2, nano-banana-2-lite/);
+});
+
+test('the catalog lists every image model with Flow\u2019s own family name and price', () => {
+  assert.deepEqual(catalogImageModels(catalog).map((m) => [m.slug, m.family, m.credits]), [
+    ['nano-banana-pro', '\ud83c\udf4c Nano Banana Pro', 0],
+    ['nano-banana-2', '\ud83c\udf4c Nano Banana 2', 0],
+    ['nano-banana-2-lite', '\ud83c\udf4c Nano Banana 2 Lite', 0],
+  ]);
+});
+
+test('the account\u2019s own image model costs what every known image model agrees on', () => {
+  assert.equal(accountImageCost(catalog), 0);
+  // One image model priced differently makes the account's cost unknown, never a guess.
+  const mixed = new Map(catalog);
+  mixed.set('HARBOR_SEAL', { ...catalog.get('HARBOR_SEAL'), costByTier: { 1: 2, 2: 2, 3: 2 } });
+  assert.equal(accountImageCost(mixed), null);
+  assert.equal(accountImageCost(null), null);
 });
 
 test('rejects settings Flow does not offer', () => {

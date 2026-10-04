@@ -148,15 +148,37 @@ test('an unavailable catalog plans the import with an honest warning, not a fals
   assert.deepEqual(plan.unknownCostRows, [1]);
   assert.match(plan.rows[0].warnings.join(' '), /catalog.*unavailable/i);
   assert.equal(plan.rows[0].stillJob.expectedCost, null);
-  assert.equal(plan.rows[0].stillJob.recipe, 'NARWHAL');
+  // The still named no model, so it rides on Flow's own image model and Flow Pilot cannot name its
+  // recipe (report §4a). Without the catalog even the family is unknown.
+  assert.equal(plan.rows[0].stillJob.recipe, null);
+  assert.equal(plan.rows[0].stillJob.modelAccountDefault, true);
 });
 
 test('a still that the catalog prices above zero still fails the row', () => {
   const paid = new Map(recipes);
   paid.set('NARWHAL', { ...recipes.get('NARWHAL'), costByTier: Object.fromEntries(Object.keys(recipes.get('NARWHAL').costByTier).map((t) => [t, 2])) });
-  const plan = planShotImport({ rows: [row()], projectId: PID, library: library(), template, recipes: paid });
+  const plan = planShotImport({ rows: [row({ model: 'nano-banana-2' })], projectId: PID, library: library(), template, recipes: paid });
   assert.equal(plan.anyError, true);
   assert.match(plan.rows[0].error, /still must be free/i);
+});
+
+test('a still on the account\u2019s own image model is refused when the image models disagree on price', () => {
+  // The job named no model, so any image model the account might be on decides the price. When they
+  // differ, the cost is unknown and a still (which must be free) fails closed instead of guessing.
+  const mixed = new Map(recipes);
+  mixed.set('NARWHAL', { ...recipes.get('NARWHAL'), costByTier: Object.fromEntries(Object.keys(recipes.get('NARWHAL').costByTier).map((t) => [t, 2])) });
+  const plan = planShotImport({ rows: [row()], projectId: PID, library: library(), template, recipes: mixed });
+  assert.equal(plan.anyError, true);
+  assert.match(plan.rows[0].error, /still must be free/i);
+});
+
+test('a shot row can name the still\u2019s Flow image model (report \u00a74a, BUG-A)', () => {
+  const plan = planShotImport({ rows: [row({ model: 'nano-banana-pro' })], projectId: PID, library: library(), template, recipes });
+  assert.equal(plan.rows[0].ok, true, plan.rows[0].error ?? '');
+  assert.equal(plan.rows[0].shot.model, 'nano-banana-pro');
+  assert.equal(plan.rows[0].stillJob.settings.model, 'nano-banana-pro');
+  assert.equal(plan.rows[0].stillJob.recipe, 'GEM_PIX_2');
+  assert.equal(plan.rows[0].stillJob.modelFamily, '\ud83c\udf4c Nano Banana Pro');
 });
 
 test('a row\'s prompt or text column is the shot\'s free text, and reaches the composed prompt', () => {

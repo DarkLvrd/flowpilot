@@ -192,3 +192,49 @@ test('a failed attach closes the picker it opened, so the next prepare finds the
   const t = p.trigger.getBoundingClientRect();
   assert.equal(p.document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2), p.trigger);
 });
+
+// ---- The model menu (report §4a, BUG-A) -----------------------------------------------------
+//
+// The real DOM, captured read-only on the live page 2026-10-03 (recon/FINDINGS.md "The model menu
+// is Flow's own, and it offers three image models"): `Select model family` opens a `.cdk-overlay-pane`
+// holding a `div[role=menu]` of `flow-menu-item`s; each item's own `button[role=menuitem]` carries
+// the family name as its label, and the item Flow is on is marked `selected`.
+function modelPage({ families = ['🍌 Nano Banana Pro', '🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite'], current = '🍌 Nano Banana 2' } = {}) {
+  const p = page();
+  const { body, el } = p;
+  const modelBtn = el('button', { attrs: { 'aria-label': 'Select model family' }, text: current, rect: { left: 0, top: 0, width: 40, height: 20 } });
+  const pane = el('div', { classes: ['cdk-overlay-pane'], rect: { left: 0, top: 40, width: 100, height: 60 } });
+  const items = families.map((label, i) => {
+    const item = el('flow-menu-item', { rect: { left: 0, top: 40 + i * 20, width: 100, height: 20 } });
+    const btn = el('button', { attrs: { role: 'menuitem' }, text: label, rect: { left: 0, top: 40 + i * 20, width: 100, height: 20 } });
+    btn.onclick = () => { modelBtn.ownText = label; pane.hidden = true; };
+    item.append(btn);
+    pane.append(item);
+    return { item, btn };
+  });
+  pane.hidden = true;
+  modelBtn.onclick = () => { pane.hidden = false; };
+  body.append(modelBtn, pane);
+  return { ...p, modelBtn, pane, items };
+}
+
+test("a job's own image model is selected through Flow's model menu (report §4a, BUG-A)", async () => {
+  const p = modelPage({ current: '🍌 Nano Banana Pro' });
+  const was = await p.driver.selectModelFamily('🍌 Nano Banana 2');
+  assert.equal(was, '🍌 Nano Banana Pro');       // what Flow was on, for the receipt
+  assert.equal(p.modelBtn.ownText, '🍌 Nano Banana 2');
+  assert.equal(p.modelBtn.clicks, 1);
+  assert.equal(p.pane.hidden, true);             // the menu is really gone, so no overlay is left open
+});
+
+test('a model the account is already on is left alone: no click at all', async () => {
+  const p = modelPage({ current: '🍌 Nano Banana 2' });
+  assert.equal(await p.driver.selectModelFamily('🍌 Nano Banana 2'), null);
+  assert.equal(p.modelBtn.clicks, 0);
+});
+
+test("a model Flow's menu does not offer fails with what the menu really offers", async () => {
+  const p = modelPage();
+  await assert.rejects(() => p.driver.selectModelFamily('🍌 Nano Banana 9'), /does not offer .*Nano Banana 2 Lite/);
+  assert.equal(p.pane.hidden, false); // it did open the menu, and says so rather than guessing
+});

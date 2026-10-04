@@ -421,11 +421,13 @@ async function addPreviewJob(spec) {
   const composed = await withComposedEntities(spec, projectId);
   const name = safeName(composed.name ?? `job-${Date.now()}`);
 
-  // The still is the same scene at the same framing, built as an ordinary image job.
+  // The still is the same scene at the same framing, built as an ordinary image job. `model` names
+  // the Flow image model (absent = the account's own current one, report §4a).
   const stillJob = buildJob(
     {
       name: `${name}-still`, prompt: composed.prompt, kind: 'image', resolution: composed.resolution, durationS: composed.durationS,
       aspect: composed.aspect, count: composed.count, entities: composed.entities, promptParts: composed.promptParts,
+      ...(composed.model ? { model: composed.model } : {}),
       ...(composed.characters?.length ? { characters: composed.characters } : {}),
     },
     { projectId, recipes },
@@ -436,7 +438,7 @@ async function addPreviewJob(spec) {
 
   // The held video: Frames, with the still as its first frame once the person approves it. Frames
   // takes no character chip, so a held character video is refused by buildJob instead of dropping it.
-  const videoJob = buildJob({ ...composed, name, kind: 'video' }, { projectId, recipes, holdFirstFrame: true });
+  const videoJob = buildJob({ ...composed, name, kind: 'video', model: undefined }, { projectId, recipes, holdFirstFrame: true });
 
   const still = await store.add({ ...stillJob, role: 'preview' });
   const video = await store.add({ ...videoJob, role: 'video', previewJobId: still.id, initialState: 'awaiting-preview' });

@@ -5,7 +5,18 @@
 
 const DURATIONS = [4, 6, 8, 10];
 const RESOLUTIONS = ['360p', '720p'];
-const IMAGE_RECIPES = { 'nano-banana-2': 'NARWHAL', 'nano-banana-pro': 'GEM_PIX_2' };
+// The image models Flow's own `Select model family` menu offers, captured live on 2026-10-04
+// (recon/FINDINGS.md "The model menu is Flow's own, and it offers three image models"): the slug a
+// job stores → the recipe id Flow runs for it. Only the slug↔recipe mapping lives here; the menu's
+// own label and the credits come from the catalog Flow serves (parseCatalog), so a renamed family
+// or a changed price is read, never assumed. `nano-banana-2-lite` had no mapping at all, so a job
+// could not name it and a still on it was refused with an unexplained mismatch (report §4a, BUG-A).
+export const IMAGE_RECIPES = {
+  'nano-banana-pro': 'GEM_PIX_2',
+  'nano-banana-2': 'NARWHAL',
+  'nano-banana-2-lite': 'HARBOR_SEAL',
+};
+export const IMAGE_MODEL_SLUGS = Object.keys(IMAGE_RECIPES);
 
 // Returns Map<recipeId, { id, family, durationS, costByTier: { [tier]: credits | null } }>.
 export function parseCatalog(inner) {
@@ -31,12 +42,40 @@ export function creditCost(catalog, recipe, tier) {
   return costs.length > 0 && costs.every((c) => c !== null && c === costs[0]) ? costs[0] : null;
 }
 
+// The image models this catalog really prices, each with the family name Flow's own model button
+// and menu show. A model missing from the catalog is left out (fail closed: the caller then has no
+// family to check the page against).
+export function catalogImageModels(catalog) {
+  if (!catalog) return [];
+  const out = [];
+  for (const slug of IMAGE_MODEL_SLUGS) {
+    const entry = catalog.get(IMAGE_RECIPES[slug]);
+    if (entry) out.push({ slug, recipe: entry.id, family: entry.family, credits: creditCost(catalog, entry.id) });
+  }
+  return out;
+}
+
+// The credits one image on the account's own image model costs, or null when that cannot be known.
+// A job that names no model rides on whatever image model the account is on, so every image model
+// the catalog knows must be present and agree: any of them could be the one. Flow's own cost line
+// still has to match before a click (lib/preflight.js), so an image model this build has never
+// heard of fails closed instead of spending.
+export function accountImageCost(catalog) {
+  const known = catalogImageModels(catalog);
+  if (known.length === 0) return null;
+  const costs = known.map((m) => m.credits);
+  return costs.every((c) => c !== null && c === costs[0]) ? costs[0] : null;
+}
+
 // The recipe Flow should run for these job settings. Flow's own UI picks the real recipe; this is
-// the expectation used for the cost preview and for matching the result record afterwards.
-export function recipeFor({ kind, model = 'nano-banana-2', input, durationS, resolution, refs = [], characters = [], firstFrame, lastFrame }) {
+// the expectation used for the cost preview and for matching the result record afterwards. For an
+// image job `model == null` means "whatever image model the account is on", which is not a recipe
+// Flow Pilot can name — the page decides the family and lib/preflight.js verifies it.
+export function recipeFor({ kind, model = null, input, durationS, resolution, refs = [], characters = [], firstFrame, lastFrame }) {
   if (kind === 'image') {
+    if (model == null) return null;
     const recipe = IMAGE_RECIPES[model];
-    if (!recipe) throw new Error(`Unknown image model: ${model}`);
+    if (!recipe) throw new Error(`Unknown image model "${model}"; Flow Pilot knows ${IMAGE_MODEL_SLUGS.join(', ')} — or leave the model unset to use whatever image model the account is on`);
     return recipe;
   }
   if (kind !== 'video') throw new Error(`Unknown kind: ${kind}`);

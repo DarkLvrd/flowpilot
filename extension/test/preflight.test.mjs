@@ -93,6 +93,30 @@ test('an image job against the live Image chip passes the pre-spend check', () =
   assert.match(problems({ summaryText: 'something new', summary: parseSettingsSummary('something new'), cost: 0 }, stillJob).join(), /kind is null, job wants image/);
 });
 
+// A still that names no model rides on whatever image model the account is on (report §4a, BUG-A):
+// the pre-spend check accepts Flow's current model as long as the catalog knows its family, and still
+// requires the cost line to match, so an unknown paid model cannot slip through.
+const accountStillJob = {
+  ...stillJob, modelFamily: null, modelAccountDefault: true,
+  imageModelFamilies: ['🍌 Nano Banana Pro', '🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite'],
+};
+
+test("a still on the account's own image model passes for any image family the catalog knows", () => {
+  const proPage = { ...stillPage, model: '🍌 Nano Banana Pro', summary: parseSettingsSummary(' 🍌 Nano Banana Pro crop_16_9 x1 ', { mode: 'image' }), summaryText: ' 🍌 Nano Banana Pro crop_16_9 x1 ' };
+  assert.deepEqual(checkBeforeSpend(accountStillJob, stillPage, budget), { ok: true, problems: [] });
+  assert.deepEqual(checkBeforeSpend(accountStillJob, proPage, budget), { ok: true, problems: [] });
+  // The cost line is still the guard: a paid image model is refused even though its family is known.
+  assert.match(problems({ cost: 5 }, accountStillJob).join(), /cost is 5 credits, expected 0/);
+});
+
+test('a still on an image model the catalog does not know fails with what to do', () => {
+  const got = problems({ model: '🍌 Nano Banana 9' }, accountStillJob).join(' ');
+  assert.match(got, /does not know/);
+  assert.match(got, /Nano Banana 2 Lite/);
+  // A still that named no model but has no families (the catalog could not be read) fails closed too.
+  assert.match(problems({}, { ...accountStillJob, imageModelFamilies: [] }).join(), /no image models to check/);
+});
+
 test('all checks pass on a matching page', () => {
   assert.deepEqual(checkBeforeSpend(job, page, budget), { ok: true, problems: [] });
 });

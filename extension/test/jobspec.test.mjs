@@ -36,6 +36,32 @@ test('an image job is priced from the image recipe (free today) and takes no ref
   assert.equal(job.referencePlan.input, 'text');
 });
 
+test("an image job that names no model rides on the account's own image model (report §4a, BUG-A)", () => {
+  const job = build({ kind: 'image', input: undefined, refs: undefined, resolution: undefined, durationS: undefined });
+  assert.equal(job.settings.model, undefined);
+  // No recipe to name: the page decides the family, and the pre-spend check verifies it is one the
+  // catalog knows. The cost is the one every image model the catalog knows agrees on (0 today).
+  assert.equal(job.recipe, null);
+  assert.equal(job.modelFamily, null);
+  assert.equal(job.modelAccountDefault, true);
+  assert.equal(job.expectedCost, 0);
+  assert.deepEqual(job.imageModelFamilies, ['🍌 Nano Banana Pro', '🍌 Nano Banana 2', '🍌 Nano Banana 2 Lite']);
+});
+
+test('an image job can name every model Flow\u2019s own menu offers, including Lite', () => {
+  const lite = build({ kind: 'image', input: undefined, refs: undefined, resolution: undefined, durationS: undefined, model: 'nano-banana-2-lite' });
+  assert.equal(lite.recipe, 'HARBOR_SEAL');
+  assert.equal(lite.modelFamily, '🍌 Nano Banana 2 Lite');
+  assert.equal(lite.expectedCost, 0);
+  assert.equal(lite.modelAccountDefault, undefined);
+  // An unknown model fails closed and lists what Flow Pilot knows.
+  assert.throws(() => build({ kind: 'image', input: undefined, refs: undefined, resolution: undefined, durationS: undefined, model: 'nano-banana-9' }), /knows nano-banana-pro, nano-banana-2, nano-banana-2-lite/);
+});
+
+test('a model on a video job is refused, not silently ignored', () => {
+  assert.throws(() => build({ model: 'nano-banana-2' }), /only be named on an image job/);
+});
+
 test('an image job takes Ingredients (1-3 reference photos) through the same validation as a video', () => {
   const ids = ['aaaaaaaa-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000002', 'cccccccc-0000-4000-8000-000000000003'];
   const job = build({ kind: 'image', input: undefined, resolution: undefined, durationS: undefined, refs: ids.slice(0, 2) });

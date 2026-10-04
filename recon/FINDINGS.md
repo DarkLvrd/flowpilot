@@ -451,3 +451,79 @@ agrees (`mime: image/jpeg`, `state: complete`, the same byte count).
 out of reach is the unattended version: Flow's Image-mode submit ignores a synthetic click (above),
 so a person's gesture (or a real pointer click) still presses Start. `extension/lib/compat.js`
 draws its image-run line from this paragraph, and a test keeps the two in step.
+## 2026-10-04 — the image model menu, and the picker pane that has no button
+
+Fixing the two blocking faults the e2e re-test found (`data/flowpilot-e2e-retest/report.md` §4a, §6,
+§10). Practice Chrome on CDP port **9333**, project `de7baa89-…`, same Flow build as the day before
+(`boq_labs-ai-sandbox-frontend_20261002.00_p0`). **Zero credits**: no Generate was ever clicked, no
+media was created, and every probe ran behind a request firewall that failed every non-read-only
+request inside the browser (the only non-read-only requests the page tried were `UpteDb` — the model
+preference save — and its own analytics/`jserror` chatter; all were blocked). Probe script:
+`recon/raw/live-fix-verify.mjs` (gitignored).
+
+### The model menu is Flow's own, and it offers three image models (read-only, 0 credits)
+
+The Settings panel's model button (`aria-label="Select model family"`) shows the model Flow is
+currently on. Its menu, opened with the driver's own click, is a `mat-menu` of `flow-menu-item`s; each
+item's own `button[role=menuitem]` carries the family name, and the item Flow is on is marked
+`selected`:
+
+```html
+<div class="cdk-overlay-pane">
+  <div role="menu" class="mat-mdc-menu-panel flow-menu-panel flow-model-picker-panel …">
+    <div class="mat-mdc-menu-content">
+      <flow-menu-item><button role="menuitem" class="mat-mdc-menu-item …">
+        <span class="mat-mdc-menu-item-text">…<span class="item-text"><span class="label">🍌 Nano Banana Pro</span>…
+      </button></flow-menu-item>
+      <flow-menu-item class="selected"><button role="menuitem" …>…🍌 Nano Banana 2…</button></flow-menu-item>
+      <flow-menu-item><button role="menuitem" …>…🍌 Nano Banana 2 Lite…</button></flow-menu-item>
+    </div>
+  </div>
+</div>
+```
+
+- With the composer in **Image** mode the menu offers exactly three families: `🍌 Nano Banana Pro`,
+  `🍌 Nano Banana 2`, `🍌 Nano Banana 2 Lite` (the practice account was on `🍌 Nano Banana 2`).
+- A plain synthetic click on the item's own `button[role=menuitem]` selects it (the model button and
+  the settings chip both change) and the menu closes; no real pointer click is needed for a model
+  change, unlike Generate. Selecting the current model again is a no-op.
+- The catalog already carried all three recipes — `GEM_PIX_2` (Pro), `NARWHAL` (2), `HARBOR_SEAL`
+  (Lite) — each at 0 credits; what was missing was the slug→recipe mapping, so no job could *name*
+  Lite and every still was built as `nano-banana-2` regardless of the account's model.
+- Driver result (firewall on, no Generate): a still that named **no** model reached a clickable
+  Generate on the account's own `🍌 Nano Banana 2` with the cost line at **0 credits**; a still that
+  named `nano-banana-pro` had Flow switched to `🍌 Nano Banana Pro` through the menu (`modelWas`
+  recorded), reached a clickable Generate at 0 credits, and the account model was then restored to
+  `🍌 Nano Banana 2` through the same menu path.
+
+### The Ingredients picker really is a pane with no button (the BUG-B shape)
+
+Opening the composer's `Add ingredients to the prompt box` on this build gives an overlay whose
+backdrop is a **sibling of the pane inside one `cdk-overlay-popover`**, and whose pane contains the
+picker content but (in the state the e2e run hit) **no button of any kind**:
+
+```
+div.cdk-overlay-popover.cdk-overlay-connected-position-bounding-box
+├── div.cdk-overlay-backdrop.cdk-overlay-dark-backdrop.cdk-overlay-backdrop-showing   (offsetParent null, 1200×846)
+└── div.cdk-overlay-pane
+    └── flow-add-menu-popover-content → div.add-menu-popover-container.flow-menu-panel → div.panels-layout …
+```
+
+Observed live in that state: `flow-add-menu-popover-content` present, `button`/`[role=button]` inside
+the pane: **0**, `mat-list-item`: 7 (the category rail), `[role=option]`: 0, no `Close` control, no
+`Add to prompt` button, backdrop visible and **`offsetParent === null`**. So the old `picker()`
+predicate (`a visible .cdk-overlay-pane that contains a button`) returned `null` and `closePicker()`
+did nothing at all: the pane and its dark backdrop stayed over the composer. On other states of the
+same picker the pane *does* carry buttons (2, including `Upload media`), which is why the e2e run saw
+both "could not close" and the silent no-op.
+
+Driver result (firewall on, no Generate, 0 credits): with that pane open, `closePicker()` detected it
+by its own content element and closed it through a free point on the backdrop; afterwards no overlay
+remained and the Settings trigger was clickable again. The same run attached the Flow Character
+`nancy` (`0bfec740-409e-42f5-80d1-82baac3349f3`) through Flow's own picker in an Ingredients video
+job: the composer chip's `/asb/` token was **byte-identical** to the picker tile's, the Ingredients
+job reached a clickable Generate, and Flow's own cost line read **4 credits** (never clicked).
+
+- Housekeeping: one work tab throughout; the composer was left in Video + 360p/4s, prompt empty, no
+  attached chip and no overlay; the account's image model was restored to `🍌 Nano Banana 2`.
+- Balance was not re-read by this lane beyond the cost lines above; nothing here submitted.

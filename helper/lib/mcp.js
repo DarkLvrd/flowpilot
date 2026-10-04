@@ -31,6 +31,7 @@ const TOOLS = [
         prompt: { type: 'string', description: 'The prompt, verbatim' },
         name: { type: 'string', description: 'Job and file name' },
         kind: { type: 'string', enum: ['video', 'image'] },
+        model: { type: 'string', enum: ['nano-banana-pro', 'nano-banana-2', 'nano-banana-2-lite'], description: "An image job's Flow image model. Without it the still runs on whatever image model the account is currently on (Flow's own model menu), which Flow Pilot reads and verifies before any click." },
         resolution: { type: 'string', enum: ['360p', '720p'] },
         durationS: { type: 'integer', enum: [4, 6, 8, 10] },
         aspect: { type: 'string', enum: ['16:9', '9:16'] },

@@ -20,11 +20,13 @@ export function awaitingPreviewCount(jobs) {
 }
 
 // A preview must be free: refuse to create one when the image model Flow would run is not 0 credits
-// (or its cost is unknown). This is what makes "a preview never spends" true by construction.
+// (or its cost is unknown). This is what makes "a preview never spends" true by construction. A null
+// `recipe` is a still that rides on the account's own image model (report §4a); its cost above is
+// then the agreed cost of every image model the catalog knows.
 export function assertFreePreview(unitCost, recipe) {
   if (unitCost !== 0) {
     const what = unitCost == null ? 'an unknown cost' : `${unitCost} credits`;
-    throw new Error(`Preview-first needs a 0-credit still, but ${recipe} reports ${what}`);
+    throw new Error(`Preview-first needs a 0-credit still, but ${recipe ?? "Flow's current image model"} reports ${what}`);
   }
 }
 

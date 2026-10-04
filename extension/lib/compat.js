@@ -17,17 +17,20 @@
 // Facts below are from `recon/FINDINGS.md` (read-only captures and the two live proofs) — not
 // claims about Flow in general.
 export const FLOW_COMPAT = {
-  noteUpdated: '2026-10-03',
-  provenThrough: '2026-10-03',
+  noteUpdated: '2026-10-04',
+  provenThrough: '2026-10-04',
   build: 'boq_labs-ai-sandbox-frontend_20261002.00_p0',
-  buildSeenAt: '2026-10-03',
+  buildSeenAt: '2026-10-04',
   proven: [
     'a full video job end to end on 2026-09-28: submit through Flow\'s own Generate, track, download, byte-check (360p 4 s, 4 credits; the account balance went 269 → 265)',
     'uploads and references on 2026-10-01: an image uploaded through Flow\'s own Upload media control, then attached as an Ingredient and as Frames, each read back by media id (0 credits)',
     'Image mode\'s own settings chip and cost line on 2026-10-03, read-only (0 credits): " 🍌 Nano Banana 2 crop_16_9 x1 " with `Generating will use 0 credits`, so a still really is free today',
     'one free still generated on 2026-10-03 (0 credits, the cost line read first) and attached again as a video\'s first frame by the picker, matched by the workflow title Flow shows on the tile (id read back off the composer)',
     'a still job end to end on 2026-10-03 (0 credits): Flow\'s Image-mode Generate ran from a real pointer click, and Flow Pilot tracked it submitted → rendering → downloading → done, downloaded it and byte-checked the JPEG (809 742 bytes, the number the browser and Flow\'s own signed URL both report)',
-    'the picker\'s own `Close` control, the backdrop and the composer\'s Add ingredients button on 2026-10-03 (0 credits, no submission): on the Frames picker only the first of the three closes it',
+    'Flow\'s own image-model menu on 2026-10-04, read-only (0 credits): three families (🍌 Nano Banana Pro, 🍌 Nano Banana 2, 🍌 Nano Banana 2 Lite), all 0 credits, each selectable through its own `flow-menu-item`',
+    'a still that named no model prepared to a clickable Generate on the account\'s own image model, and a still that named another model had it selected through Flow\'s own menu and restored, both at 0 credits with the cost line read first (2026-10-04)',
+    'a Flow Character attached through Flow\'s own picker in an Ingredients video job on 2026-10-04: the composer chip\'s token matched the picker tile\'s and the job reached a clickable Generate with Flow\'s own cost line at 4 credits (never clicked)',
+    'the picker\'s own `Close` control, the backdrop and the composer\'s Add ingredients button on 2026-10-03 (0 credits, no submission): on the Frames picker only the first of the three closes it; on 2026-10-04 the Ingredients pane was detected by its own content element and closed by a free point on its backdrop, including the pane shape that carries no button at all',
     'the self-check and the pre-spend checks (tab, project, mode, verbatim prompt, cost, cap) on every submit since 2026-09-28',
   ],
   changed: [
@@ -37,6 +40,7 @@ export const FLOW_COMPAT = {
     'the media reader had to switch from the workflow title to the record\'s own prompt, and from the first signed URL to the kind-matching one (2026-09-28)',
     'the picker labels a generated media with the workflow title Flow wrote, not with the prompt the record keeps (2026-10-03), and several media can share one title',
     'Image mode\'s settings chip carries the image model\'s name where a video chip writes the word `Video`, so there is no kind word to read in that mode (2026-10-03)',
+    'the image model is account-global, and Flow\'s own `Select model family` menu is the only way to choose it; Flow Pilot reads that menu and selects a job\'s named model through it (2026-10-04)',
   ],
   knownIssues: [
     'the work tab must be the front tab of its window while a job is prepared and submitted; otherwise the job waits and the dashboard says so (docs/LESSONS.md #23)',
@@ -48,8 +52,9 @@ export const FLOW_COMPAT = {
     'loading the extension unpacked gives it a new id; the helper refuses to talk to a new id until the pin is cleared with `flowpilot serve --forget-extension`',
   ],
   unverified: [
-    'an image job end to end from Flow Pilot\'s own click: the pre-spend check, the picker attach and a whole still run are proven live (2026-10-03) and a still costs 0 credits, but Flow\'s Image-mode submit ignores synthetic clicks, so a real gesture (a person\'s, or a real pointer click) still starts the still',
+    'an image job end to end from Flow Pilot\'s own click: the pre-spend check, the picker attach, the account\'s own model read off Flow\'s model menu and a whole still run are proven live (2026-10-03/04) and a still costs 0 credits, but Flow\'s Image-mode submit ignores synthetic clicks, so a real gesture (a person\'s, or a real pointer click) still starts the still',
     'a shot\'s video end to end: approving the still built and anchored the video job live (2026-10-03; its first frame the approved still, 4 credits) but no video job has run end to end yet',
+    'a paid Flow Character video end to end: the composer prep and the chip-token match are proven live (2026-10-04, 4-credit job, never clicked), but no paid Generate was clicked on this build by this lane',
     'a chip-only Flow Character job with no typed mention: the paid capture cannot separate the two signals',
     'a batch of more than a handful of rows in one day: pacing and the halt are designed for it, but the field evidence only covers single jobs and one burst',
     'the 2K/4K upsample and the image *edit* flow — deliberately out of scope',

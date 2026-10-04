@@ -19,6 +19,9 @@ const USAGE = `Usage: flowpilot <command>
   job <id>                  One job
   add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|720p]
       [--duration 4|6|8|10] [--aspect 16:9|9:16] [--count 1-4] [--project ID] [--out /abs/path.mp4]
+      [--model nano-banana-pro|nano-banana-2|nano-banana-2-lite]
+                                An image job's Flow image model; without it the still runs on
+                                whatever image model the account is on (Flow's own model menu)
       [--ref REF ...]           Ingredients: reference photo(s) — a Flow media id or an absolute
                                 image path (repeat --ref for several); face-matched character work
       [--first-frame REF]       Frames: the start photo (media id or absolute image path)
@@ -74,6 +77,7 @@ const OPTIONS = {
   name: { type: 'string' }, prompt: { type: 'string' }, kind: { type: 'string' }, resolution: { type: 'string' },
   duration: { type: 'string' }, aspect: { type: 'string' }, count: { type: 'string' }, project: { type: 'string' },
   out: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+  model: { type: 'string' },
   'forget-extension': { type: 'boolean' },
   config: { type: 'string' },
   ref: { type: 'string', multiple: true }, 'first-frame': { type: 'string' }, 'last-frame': { type: 'string' },
@@ -130,6 +134,9 @@ export async function main(argv, { env = process.env, out = console.log, err = c
           name: o.name, prompt: o.prompt, kind: o.kind, resolution: o.resolution,
           durationS: o.duration && Number(o.duration), aspect: o.aspect, count: o.count && Number(o.count),
           projectId: o.project, outputPath: o.out,
+          // An image job's Flow image model (`nano-banana-pro`, `nano-banana-2`, `nano-banana-2-lite`);
+          // without it the still runs on whatever image model the account is on (report §4a, BUG-A).
+          model: o.model,
           // The library entities this job composes (and whose Flow Characters it attaches); the
           // extension resolves the names and carries the entity ids. Dropping it here queued a job
           // that named a subject and never used it (BUG-4).

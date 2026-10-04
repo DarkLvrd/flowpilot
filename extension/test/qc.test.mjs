@@ -166,10 +166,13 @@ test('the automatic technical check reads what the extension already verified', 
   const drifted = technicalCheck({ ...doneVideo(), recipe: 'abra_i2v_6s_360p' });
   assert.equal(drifted.result, 'fail');
   assert.match(drifted.problems.join(' '), /recipe/);
-  // An image job is checked the same way.
-  const image = { id: 'i1', state: 'done', mediaId: MEDIA, recipe: 'NARWHAL', settings: { kind: 'image' }, file: { path: '/tmp/x.png', type: 'png' } };
+  // An image job is checked the same way when it names its model.
+  const image = { id: 'i1', state: 'done', mediaId: MEDIA, recipe: 'NARWHAL', settings: { kind: 'image', model: 'nano-banana-2' }, file: { path: '/tmp/x.png', type: 'png' } };
   assert.equal(technicalCheck(image).result, 'pass');
   assert.equal(technicalCheck({ ...image, file: { path: '/tmp/x.mp4', type: 'mp4' } }).result, 'fail');
+  // A still that named no model rides on Flow's own image model, so there is no recipe to compare.
+  const accountDefault = { ...image, recipe: null, settings: { kind: 'image' } };
+  assert.equal(technicalCheck(accountDefault).result, 'pass');
 });
 
 test('buildQcRecord fills technical in itself, derives the verdict and refuses a contradiction', () => {

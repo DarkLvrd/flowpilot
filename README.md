@@ -62,7 +62,12 @@ is overlaid on Flow's own page.
   text Flow will receive. See [Consistency](#consistency-characters-vehicles-and-locations).
 - **Shots (still first, video second)** — import a shot list in the **Shots** panel (or
   `flowpilot shots import`). Each row gets one **free** still image job and nothing else, so no
-  credits can move for a shot you have not seen. When the still finishes it appears in the row;
+  credits can move for a shot you have not seen. A row may name the still's Flow image model
+  (`model: nano-banana-pro`, `nano-banana-2` or `nano-banana-2-lite`); without one the still runs on
+  whatever image model the account is on, and Flow Pilot reads that model and selects a named one
+  through Flow's own model menu before any click (see
+  [Image models](#image-models)). When the still finishes it
+  appears in the row;
   press **Approve still** to record who approved it and when — that is the click that *creates* the
   shot's video job, with its price shown before you press anything. The video's own approve button
   stays disabled until then, and approving the video is what would spend (still inside the session
@@ -140,6 +145,19 @@ only after its still is approved; see
 [Consistency](#consistency-characters-vehicles-and-locations) and the **Shots** panel in the
 dashboard.
 
+### Image models
+
+Flow keeps one **image model** per account (its own **Select model family** menu offers `🍌 Nano
+Banana Pro`, `🍌 Nano Banana 2` and `🍌 Nano Banana 2 Lite`, all 0 credits for a still today). Flow
+Pilot reads that menu and prices every model from Flow's own cost line. An **image job may name the
+model it wants** (`--model`, a storyboard row's `model`, the **Image model** select in the **Add a
+job** form, or a shot row's `model`); without one it runs on **whatever model the account is on**.
+When a job names a model the account is not on, Flow Pilot selects it through Flow's own menu — the
+same careful click as any other control — and reads it back before anything else. If the menu does
+not offer the model, or the model is one this build does not know, the job fails with exactly what
+to do instead of a bare mismatch. The pre-spend check still compares the model Flow shows with the
+one the job asked for, and the cost line with the quoted price, before any click.
+
 ### Batch / storyboard import
 
 Fill the queue from a storyboard instead of typing jobs one at a time. Drop a `.json` or `.csv`
@@ -165,7 +183,7 @@ A JSON storyboard is an array of rows (or `{ "scenes": [ … ] }`); a CSV needs 
 | `firstFrame` / `lastFrame` | `startFrame` / `endFrame` | Frames: one media id or absolute image path each |
 | `outputPath` | `output`, `path` | an absolute path for the helper to write |
 | `name` | `title` | the job's label (defaults to the scene) |
-| `model` | | image model (`nano-banana-pro` for Nano Banana Pro) |
+| `model` | | the still's image model (`nano-banana-pro`, `nano-banana-2` or `nano-banana-2-lite`); without it the still runs on whatever image model the account is on |
 
 ```
 scene,prompt,kind,resolution,duration,count
@@ -242,7 +260,9 @@ This is Phase 1 of the design: it needs no browser interaction and cannot spend 
   `entities` by name against the library, and queues one free still per shot. Unknown names fail the
   whole import; an unapproved entity is a warning and is left out. `flowpilot shots list` shows each
   shot with its gate and the video cost; `flowpilot still <shotId>` (re)queues a still; `flowpilot
-  anchor <shotId> [--media <id>]` approves a finished still and creates the video job.
+  anchor <shotId> [--media <id>]` approves a finished still and creates the video job. A shot row may
+  name the still's image model (`model`), so every still in a list can run on the same Flow image
+  model instead of the account's current one.
 - **The QC loop (Phase 3).** Every finished clip can be reviewed on six checks: `technical` (bytes,
   duration bucket, resolution, aspect, non-empty, recipe vs settings) is **automatic**, read from the
   job; `identity`, `wardrobe`, `location`, `artefacts` and `style` need eyes. Flow Pilot never
@@ -307,6 +327,7 @@ flowpilot job <id>                     One job
 flowpilot add --prompt TEXT [--name N] [--kind video|image] [--resolution 360p|720p]
              [--duration 4|6|8|10] [--aspect 16:9|9:16] [--count 1-4]
              [--project ID] [--out /abs/path.mp4]
+             [--model nano-banana-pro|nano-banana-2|nano-banana-2-lite]
              [--ref REF ...] [--first-frame REF] [--last-frame REF] [--entity NAME ...]
 flowpilot approve|cancel|requeue|retry-download <id>
 flowpilot entity add --project P --kind character --name Rudy --desc-file block.txt
@@ -367,7 +388,8 @@ flowpilot add --prompt "a slow zoom in" --first-frame /Users/me/wide.png --last-
 
 `flowpilot_add_job` also takes `refs` (1-3 Ingredients reference photos), `firstFrame` and
 `lastFrame` (Frames), each a Flow media id or an absolute image path — the same face-matched
-character work as the CLI above.
+character work as the CLI above — and `model` (an image job's Flow image model: `nano-banana-pro`,
+`nano-banana-2` or `nano-banana-2-lite`; without it the still runs on the account's own model).
 
 `flowpilot mcp` runs an MCP server on stdio with seventeen tools: `flowpilot_status`, `flowpilot_job`,
 `flowpilot_add_job` (which also takes `entities` — approved names from the project library, composed
