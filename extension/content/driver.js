@@ -29,10 +29,13 @@
   const ADD_TO_PROMPT = /^add to prompt$/i;
   const FRAME_SLOT = { firstFrame: 'Start', lastFrame: 'End' };
   // Reference tiles and attached thumbnails can take a few seconds to render (a fresh upload, or a
-  // virtual-scroller picker); one budget for finding a tile and for reading the attach back.
-  const ATTACH_WAIT_MS = 15_000;
-  // Closing the asset picker is a click and a DOM change, not a render: short, but not zero.
-  const PICKER_CLOSE_MS = 3_000;
+  // virtual-scroller picker); one budget for finding a tile and for reading the attach back. The
+  // Ingredients picker has taken longer than 15 s to render once (report §6), so the ceiling is 30 s.
+  const ATTACH_WAIT_MS = 30_000;
+  // Closing the asset picker is a click and a DOM change, not a render: short, but not zero. The
+  // Ingredients pane animates and its backdrop can swallow the first click, so this is 8 s — a
+  // ceiling, not a sleep.
+  const PICKER_CLOSE_MS = 8_000;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -151,8 +154,18 @@
 
   // ---- References: the asset picker, uploads and attach (recon 2026-10-01) ------------------
 
-  // The open asset picker (a CDK overlay), or null. The settings panel is not an overlay here.
-  const picker = () => $$('.cdk-overlay-pane').find((el) => el.offsetParent !== null && el.querySelector('button, [role=button]')) || null;
+  // The open asset picker, or null. Its own content element names it on every variant
+  // (`flow-add-menu-popover-content` for both Frames and Ingredients — live 2026-10-03). A visible
+  // pane whose tiles are options and which carries no button at all is still the picker; the old
+  // "a visible pane with a button" test missed exactly that shape and closed nothing, silently
+  // (report §6, BUG-B). The second shape is the one the driver tests model.
+  const PICKER_CONTENT = 'flow-add-menu-popover-content, flow-add-menu-asset-list';
+  const picker = () => {
+    const panes = $$('.cdk-overlay-pane').filter((el) => el.offsetParent !== null);
+    return panes.find((el) => el.querySelector(PICKER_CONTENT))
+      || panes.find((el) => el.querySelector('button, [role=button]') && el.querySelector('[role=option], mat-list-item, img, video'))
+      || null;
+  };
   // The media id in an <img>/<video> thumbnail, or null.
   const contentId = (el) => (el?.getAttribute('src') || el?.src || '').match(CONTENT_ID)?.[1] ?? null;
   const promptBox = () => composer()?.closest('flow-prompt-box') || composer()?.parentElement || null;
@@ -199,7 +212,7 @@
     const btn = composerButton(NAMES.ingredients);
     if (!clickable(btn)) throw new Error('Cannot open the asset picker (Add ingredients button not clickable)');
     btn.click();
-    await waitFor(picker, { what: 'the asset picker' });
+    await waitFor(picker, { what: 'the asset picker', timeoutMs: ATTACH_WAIT_MS });
   }
 
   // The picker's own close control. The Frames picker has one — a mat-icon-button labelled `Close`
@@ -215,19 +228,44 @@
     }) ?? null;
   }
 
+  // The CDK backdrop behind a picker, found at a point the picker's own pane does not cover. Its
+  // `offsetParent` is null on the live page (a fixed-position element), so visibility is its rect,
+  // not offsetParent — the old predicate skipped the one step that closes the Ingredients picker
+  // (report §6, BUG-B). Clicking a backdrop only dismisses the picker: it can neither attach media
+  // nor spend, so trying it is always safe.
+  function clickableBackdrop() {
+    const bd = $$('.cdk-overlay-backdrop').find((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }) ?? null;
+    if (!bd) return null;
+    const r = bd.getBoundingClientRect();
+    const points = [
+      [r.left + r.width / 2, r.top + r.height / 2],
+      [r.left + 1, r.top + 1],
+      [r.left + r.width - 1, r.top + 1],
+      [r.left + 1, r.top + r.height - 1],
+      [r.left + r.width - 1, r.top + r.height - 1],
+    ];
+    const owns = points.some(([x, y]) => { const top = document.elementFromPoint(x, y); return !!top && (top === bd || bd.contains(top)); });
+    return owns ? bd : null;
+  }
+
   // Clears the asset picker, in the order the live page needs. The picker's own `close` control
-  // first, then the CDK backdrop, then the composer's ingredients button (the Ingredients picker has
-  // no close control of its own and is dismissed by its trigger). Each step waits on the real DOM;
-  // when none of them closes it the call throws, because a picker left open over the composer makes
-  // the *next* step report something misleading ("Settings trigger is not clickable") — the wedge
-  // this exists to prevent (BUG-5). A page with no picker open is a no-op.
+  // first, then the CDK backdrop (at a free point, so a pane that covers the centre no longer hides
+  // it), then the composer's ingredients button (the Ingredients picker has no close control of its
+  // own and is dismissed by its trigger). Each step waits on the real DOM; when none of them closes
+  // it the call throws, because a picker left open over the composer makes the *next* step report
+  // something misleading ("Settings trigger is not clickable") — the wedge this exists to prevent
+  // (BUG-5). A page with no picker open, including a pane with no button at all, is a no-op.
   async function closePicker() {
     if (!picker()) return;
-    const steps = [() => pickerCloseControl(picker()), () => $$('.cdk-overlay-backdrop').find((el) => el.offsetParent !== null), () => composerButton(NAMES.ingredients)];
-    for (const step of steps) {
-      const control = step();
+    const steps = [
+      { find: () => pickerCloseControl(picker()), guarded: true },
+      { find: () => clickableBackdrop(), guarded: false }, // it validated its own free point already
+      { find: () => composerButton(NAMES.ingredients), guarded: true },
+    ];
+    for (const { find, guarded } of steps) {
+      const control = find();
       if (!control) continue;
-      if (!clickable(control)) continue;
+      if (guarded && !clickable(control)) continue;
       control.click();
       if (await waitFor(() => !picker(), { what: 'the asset picker to close', timeoutMs: PICKER_CLOSE_MS }).catch(() => null)) return;
     }
@@ -333,8 +371,10 @@
       try {
         await closePicker();
       } catch (closeError) {
-        // A Halt already stops everything for a person to look; never lose that reason.
-        if (!(e instanceof Halt)) e.message = `${e.message}; ${closeError.message}`;
+        // A Halt already stops everything for a person to look; never lose that reason. And when the
+        // failure *is* the picker close, its message is already on `e` — appending it again made a
+        // job read as the same sentence twice (report §6).
+        if (!(e instanceof Halt) && !e.message.includes(closeError.message)) e.message = `${e.message}; ${closeError.message}`;
       }
       throw e;
     }

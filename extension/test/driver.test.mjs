@@ -107,8 +107,10 @@ function page() {
 // The composer with its own controls, plus an open picker overlay. `closeControl` and `backdrop` are
 // each 'closes' (its click dismisses the picker), 'inert' (the click lands but does nothing, which is
 // what the live Frames picker's backdrop really did) or null (not there at all). `triggerCloses` is
-// how the Ingredients picker is dismissed: by the composer's own button.
-function composerWithPicker({ closeControl = null, backdrop = null, triggerCloses = false, coveringBackdrop = false, backdropRect = { left: 200, top: 200, width: 100, height: 100 } } = {}) {
+// how the Ingredients picker is dismissed: by the composer's own button. `noButtons` models the
+// Ingredients pane the live page really showed on 2026-10-03 (report §6): its tiles are options and
+// it carries no button at all, which is why the old "a pane with a button" predicate saw nothing.
+function composerWithPicker({ closeControl = null, backdrop = null, triggerCloses = false, coveringBackdrop = false, noButtons = false, backdropRect = { left: 200, top: 200, width: 100, height: 100 } } = {}) {
   const p = page();
   const { body, el } = p;
   const composer = el('flow-base-prompt-box', { rect: { left: 0, top: 0, width: 100, height: 100 } });
@@ -117,9 +119,14 @@ function composerWithPicker({ closeControl = null, backdrop = null, triggerClose
   body.append(composer);
 
   const pane = el('div', { classes: ['cdk-overlay-pane'], rect: { left: 200, top: 200, width: 100, height: 100 } });
+  // The picker's own content element (live 2026-10-03): this is what identifies the pane, whatever
+  // buttons it happens to show.
+  pane.append(el('flow-add-menu-popover-content', { rect: { left: 200, top: 200, width: 100, height: 100 } }));
   const backdropEl = backdrop ? el('div', { classes: ['cdk-overlay-backdrop'], rect: coveringBackdrop ? { left: 0, top: 0, width: 400, height: 400 } : backdropRect }) : null;
   const close = closeControl ? el('button', { attrs: { 'aria-label': 'Close' }, rect: { left: 200, top: 200, width: 20, height: 20 } }) : null;
-  const tile = el('button', { rect: { left: 220, top: 220, width: 20, height: 20 } });
+  const tile = noButtons
+    ? el('div', { attrs: { role: 'option' }, rect: { left: 220, top: 220, width: 20, height: 20 } })
+    : el('button', { rect: { left: 220, top: 220, width: 20, height: 20 } });
   pane.append(...[close, tile].filter(Boolean));
   body.append(...[backdropEl, pane].filter(Boolean));
 
@@ -170,12 +177,43 @@ test('a picker that will not close is a loud error, not a wedged composer', asyn
   assert.equal(p.pane.parent, p.body); // the picker is still there: nothing was silently swallowed
 });
 
+// BUG-B (report §6): the Ingredients picker the live page really showed has NO button of any kind,
+// so the old predicate (`a visible pane that contains a button`) saw nothing and closePicker() was a
+// silent no-op — the pane and its dark backdrop stayed over the composer. It is identified by its
+// own content element instead, and the backdrop behind it closes it.
+test('a picker pane with no button at all is still detected and closed (BUG-B)', async () => {
+  const p = composerWithPicker({ noButtons: true, backdrop: 'closes', coveringBackdrop: true, triggerCloses: true });
+  await p.driver.closePicker();
+  assert.equal(p.pane.parent, null);
+  assert.equal(p.backdrop.clicks, 1); // a free point on the backdrop, not the covered trigger
+  assert.equal(p.trigger.clicks, 0);
+});
+
+test('a button-less picker that nothing closes is reported loudly, never silently (BUG-B)', async () => {
+  const p = composerWithPicker({ noButtons: true, backdrop: 'inert', coveringBackdrop: true });
+  await assert.rejects(() => p.driver.closePicker(), /picker would not close/i);
+  assert.equal(p.pane.parent, p.body);
+});
+
+// The doubled message the live run produced: the failure that left the picker open and the close
+// failure are the same sentence when the close is what failed, so appending it again read as two.
+test('a picker that will not close is reported once, not twice (report §6)', async () => {
+  const p = composerWithPicker({ noButtons: true, backdrop: 'inert' });
+  const start = p.el('button', { text: 'Start', rect: { left: 0, top: 40, width: 20, height: 20 } });
+  start.onclick = () => p.setOpen(true);
+  p.composer.append(start);
+  p.pane.hidden = true;
+  const err = await p.driver.attachReferences('frames', { firstFrame: ID, names: { [ID]: ['Person standing on rooftop balcony'] } }).catch((e) => e);
+  const seen = (err.message.match(/picker would not close/gi) ?? []).length;
+  assert.equal(seen, 1, err.message);
+});
+
+const ID = 'ffffffff-0000-4000-8000-000000000006';
+
 // The failure this whole path exists for (BUG-5): an attach that fails mid-way used to leave the
 // Frames picker open over the composer, and the *next* prepare then died with "Settings trigger is
 // not clickable". `prepare` starts with this same routine, so a trigger that reports clickable here
 // is what the next attempt really sees.
-const ID = 'ffffffff-0000-4000-8000-000000000006';
-
 test('a failed attach closes the picker it opened, so the next prepare finds the trigger clickable', async () => {
   const p = composerWithPicker({ closeControl: 'closes' });
   const start = p.el('button', { text: 'Start', rect: { left: 0, top: 40, width: 20, height: 20 } });
