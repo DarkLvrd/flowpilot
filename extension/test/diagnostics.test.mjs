@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildDiagnostics } from '../lib/diagnostics.js';
 import { FLOW_COMPAT, compatNote, compatReport } from '../lib/compat.js';
 
@@ -97,6 +98,20 @@ test('the compatibility note is dated and honest about what is unverified', () =
   for (const line of FLOW_COMPAT.knownIssues) assert.ok(report.includes(line), `missing known issue: ${line}`);
   for (const line of FLOW_COMPAT.unverified) assert.ok(report.includes(line), `missing unverified item: ${line}`);
   assert.match(report, /how to update this note/i);
+});
+
+test('the note about image runs keeps step with the run recon/FINDINGS.md records', () => {
+  // The note's facts are drawn from recon/FINDINGS.md (compat.js says so in its own header). This
+  // test is that contract: the note may only deny that an image run finished while the record shows
+  // none finishing, and it must carry the run's proof as soon as the record does (report §10 E).
+  const findings = readFileSync(new URL('../../recon/FINDINGS.md', import.meta.url), 'utf8');
+  const onRecord = findings.includes('An image run finished through the extension');
+  const report = compatReport(FLOW_COMPAT);
+  const drawnAsProven = FLOW_COMPAT.proven.some((l) => /still job end to end/i.test(l));
+  assert.equal(drawnAsProven, onRecord,
+    onRecord ? 'the record shows a finished image run, so the proven list must carry it' : 'the proven list claims a run the record does not show');
+  assert.equal(/no image run has completed/.test(report), !onRecord,
+    'the unverified list and the record disagree about whether an image run has finished');
 });
 
 test('the compatibility note never claims more than was tested: it names the build it saw', () => {

@@ -26,6 +26,7 @@ export const FLOW_COMPAT = {
     'uploads and references on 2026-10-01: an image uploaded through Flow\'s own Upload media control, then attached as an Ingredient and as Frames, each read back by media id (0 credits)',
     'Image mode\'s own settings chip and cost line on 2026-10-03, read-only (0 credits): " 🍌 Nano Banana 2 crop_16_9 x1 " with `Generating will use 0 credits`, so a still really is free today',
     'one free still generated on 2026-10-03 (0 credits, the cost line read first) and attached again as a video\'s first frame by the picker, matched by the workflow title Flow shows on the tile (id read back off the composer)',
+    'a still job end to end on 2026-10-03 (0 credits): Flow\'s Image-mode Generate ran from a real pointer click, and Flow Pilot tracked it submitted → rendering → downloading → done, downloaded it and byte-checked the JPEG (809 742 bytes, the number the browser and Flow\'s own signed URL both report)',
     'the picker\'s own `Close` control, the backdrop and the composer\'s Add ingredients button on 2026-10-03 (0 credits, no submission): on the Frames picker only the first of the three closes it',
     'the self-check and the pre-spend checks (tab, project, mode, verbatim prompt, cost, cap) on every submit since 2026-09-28',
   ],
@@ -47,8 +48,8 @@ export const FLOW_COMPAT = {
     'loading the extension unpacked gives it a new id; the helper refuses to talk to a new id until the pin is cleared with `flowpilot serve --forget-extension`',
   ],
   unverified: [
-    'an image job end to end through Flow Pilot\'s own click: the pre-spend check and the picker attach are proven live (2026-10-03) and a still really generates at 0 credits when a real click is given, but Flow Pilot\'s synthetic click cannot pass Flow\'s own isTrusted gate in Image mode, so no image run has completed through the extension yet',
-    'a shot\'s video from an approved still end to end: the attach is proven live (2026-10-03) and the still\'s own generation is proven, but the still\'s submit click needs a real gesture today',
+    'an image job end to end from Flow Pilot\'s own click: the pre-spend check, the picker attach and a whole still run are proven live (2026-10-03) and a still costs 0 credits, but Flow\'s Image-mode submit ignores synthetic clicks, so a real gesture (a person\'s, or a real pointer click) still starts the still',
+    'a shot\'s video end to end: approving the still built and anchored the video job live (2026-10-03; its first frame the approved still, 4 credits) but no video job has run end to end yet',
     'a chip-only Flow Character job with no typed mention: the paid capture cannot separate the two signals',
     'a batch of more than a handful of rows in one day: pacing and the halt are designed for it, but the field evidence only covers single jobs and one burst',
     'the 2K/4K upsample and the image *edit* flow — deliberately out of scope',

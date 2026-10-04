@@ -387,7 +387,8 @@ failed attach closed the picker, the trigger stayed clickable, and the next `pre
 
 ### NEW: Flow's Image-mode Generate ignores synthetic clicks (read-only + firewalled clicks)
 
-Not a Flow Pilot bug, and the reason a still cannot be finished by the extension today. Firewalled
+Not a Flow Pilot bug, and the reason the extension cannot finish a still by its own click today.
+Firewalled
 experiments (`live-click-firewall.mjs`, `live-click-video.mjs`, `live-click-why.mjs`,
 `live-click-commit.mjs`) prepared a real job in each mode with the worktree driver and watched whether
 Flow's own handler ran (its first act is to have Flow mint its own reCAPTCHA token):
@@ -432,3 +433,21 @@ is left wedged for the next job.
   session and outside this project; nothing here approved or clicked a video).
 - Firewalls were disabled and every probe's injected world left behind; probe scripts live in
   `recon/raw/` (gitignored) with their logs (`live-still-gate.log`, `live-attach.log`).
+
+### The still run end to end, from the re-test (2026-10-03 late, 0 credits)
+
+The end-to-end re-test (`data/flowpilot-e2e-retest/report.md` §4c) closed the gap the section above
+left open, with a gesture a content script cannot mint. The extension prepared the composer (prompt
+verbatim, Image mode, `🍌 Nano Banana 2 crop_16_9 x1`, the 0-credit cost line read first) and wrote
+the write-ahead click; a **real CDP pointer click** (`Input.dispatchMouseEvent`,
+`mousePressed`+`mouseReleased`, so `event.isTrusted === true`) on Flow's own **Start generation**
+started it. From there the extension did the whole run: `submitted → rendering → downloading →
+done`, media id `72b2d6a5-8285-4189-9c24-90e03be0440b`, saved to
+`~/Downloads/FlowPilot/de7baa89-…/shot_1_rooftop-still.jpg`. The file is byte-checked against Flow's
+own CDN — 809 742 bytes and JPEG magic `ffd8ffe0` — and the browser's own `chrome.downloads` record
+agrees (`mime: image/jpeg`, `state: complete`, the same byte count).
+
+**An image run finished through the extension** — a still job, 0 credits, 2026-10-03. What stays
+out of reach is the unattended version: Flow's Image-mode submit ignores a synthetic click (above),
+so a person's gesture (or a real pointer click) still presses Start. `extension/lib/compat.js`
+draws its image-run line from this paragraph, and a test keeps the two in step.
