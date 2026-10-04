@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, statSync, existsSync, readdirSync, utimesSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, existsSync, readdirSync, utimesSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   SERVER_NAME, defaultConfigPath, buildServerEntry, checkNode, mergeServerEntry, inspectConfig,
@@ -141,6 +141,31 @@ test('inspect accepts a working config whatever form its Node command takes, and
   assert.equal(withCommand('/usr/bin/python3').ok, false);
   assert.equal(withCommand(undefined).ok, false);
   assert.equal(withCommand('node', ['/somewhere/else.js', 'mcp']).ok, false);
+});
+
+test('inspect accepts the same install reached from another checkout, and still fails a wrong script', () => {
+  // The script in `args` identifies the install, and an install can be reached by more than one
+  // path: another worktree or clone writes its own absolute path, which `doctor` used to report as
+  // "points elsewhere" (report §10 fault F). A script that is not this program, or one that is no
+  // longer there, is still a broken config.
+  const file = join(tmp(), 'claude_desktop_config.json');
+  const other = join(tmp(), 'helper', 'bin', 'flowpilot.js');
+  mkdirSync(dirname(other), { recursive: true });
+  writeFileSync(other, '#!/usr/bin/env node\n// the flowpilot helper\n');
+  const write = (command, args) => {
+    writeFileSync(file, JSON.stringify({ mcpServers: { [SERVER_NAME]: { command, args } } }));
+    return inspectConfig({ file, entry: entry() });
+  };
+
+  const elsewhere = write('node', [other, 'mcp']);
+  assert.equal(elsewhere.ok, true, elsewhere.reason);
+  assert.equal(elsewhere.reason, 'ok');
+
+  const foreign = write('node', [join(dirname(other), 'other.js'), 'mcp']);
+  assert.equal(foreign.ok, false);
+  assert.equal(foreign.reason, 'different');
+  assert.equal(write('node', [join(tmp(), 'helper', 'bin', 'flowpilot.js'), 'mcp']).ok, false, 'a deleted checkout is still broken');
+  assert.equal(write('node', [other, 'mcp', '--port', '1']).ok, false, 'a different command line is still a different entry');
 });
 
 test('install-claude writes the config, says exactly what changed, and explains the one manual step', async () => {

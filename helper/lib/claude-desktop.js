@@ -5,7 +5,7 @@
 // backup first. The command is this Node binary by absolute path, because Claude Desktop does not
 // inherit the shell PATH and a bare "node" often is not found.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -60,15 +60,32 @@ export function mergeServerEntry(config, entry, name = SERVER_NAME) {
   };
 }
 
-// Read-only look at an existing config: does `mcpServers.flowpilot` point at this install?
+// Read-only look at an existing config: does `mcpServers.flowpilot` point at a working flowpilot?
 //
 // The command is compared by what it starts, not byte-for-byte: a working config may name the Node
 // install-claude writes, a different Node install, or the bare `node` on PATH. Requiring the
 // absolute path made a perfectly working setup a permanent ❌ (and its hint suggested rewriting it).
-// The script in `args` is still compared exactly — that is the part that identifies *this* install.
+// The script in `args` is what identifies the install, and an install can be reached by more than
+// one path — another worktree, a second clone, an npx cache — so the same bin name behind a real
+// file counts as the same install, while a path that names another program, or one that is no
+// longer there, is still a broken config (report §10 fault F).
 const NODE_COMMANDS = new Set(['node', 'node.exe', 'nodejs', 'nodejs.exe']);
 const basenameOf = (command) => String(command ?? '').split(/[\\/]/).pop().toLowerCase();
 const startsNode = (command) => NODE_COMMANDS.has(basenameOf(command));
+
+function sameScript(current, wanted) {
+  if (current === wanted) return true;
+  if (typeof current !== 'string' || typeof wanted !== 'string') return false;
+  if (basenameOf(current) !== basenameOf(wanted)) return false;
+  try { return statSync(current).isFile(); } catch { return false; }
+}
+
+function sameArgs(current, wanted) {
+  if (!Array.isArray(current) || !Array.isArray(wanted)) return false;
+  // Everything after the script (the subcommand and its flags) must match exactly, so this can
+  // never excuse a different invocation.
+  return JSON.stringify(current.slice(1)) === JSON.stringify(wanted.slice(1)) && sameScript(current[0], wanted[0]);
+}
 
 export function inspectConfig({ file, entry, name = SERVER_NAME } = {}) {
   if (!existsSync(file)) return { file, present: false, ok: false, reason: 'missing' };
@@ -77,7 +94,7 @@ export function inspectConfig({ file, entry, name = SERVER_NAME } = {}) {
   const current = config?.mcpServers?.[name] ?? null;
   if (!current) return { file, present: true, ok: false, reason: 'no-server', current: null };
   const commandOk = current.command === entry?.command || (startsNode(current.command) && startsNode(entry?.command));
-  const same = commandOk && JSON.stringify(current.args) === JSON.stringify(entry?.args);
+  const same = commandOk && sameArgs(current.args, entry?.args);
   return { file, present: true, ok: same, reason: same ? 'ok' : 'different', current };
 }
 
