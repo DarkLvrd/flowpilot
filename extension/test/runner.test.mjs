@@ -407,6 +407,11 @@ test('an Ingredients job resolves its references, attaches them, passes the chec
   await runner.tick();
   assert.ok(world.log.includes('resolve:a'));
   assert.ok(world.log.indexOf('resolve:a') < world.log.indexOf('prepare:a')); // resolve before prepare
+  assert.ok(world.log.includes('click'));
+  const after = await store.get(job.id);
+  assert.equal(after.state, 'submitted');
+  assert.deepEqual(after.references, { ingredients: [REF_A, 'uploaded--pics-face-png'], firstFrame: null, lastFrame: null });
+});
 
 // Report §5: the finished job's own record says whether the character was really used. The engine
 // records it from the record it already fetches, so QC states a fact instead of guessing.
@@ -458,11 +463,6 @@ test('a character-only job resolves its character and submits through the ordina
   assert.equal(after.state, 'submitted');
   assert.deepEqual(after.references.characters, [char]);
   assert.equal((await store.session()).spent, 4);
-});
-  assert.ok(world.log.includes('click'));
-  const after = await store.get(job.id);
-  assert.equal(after.state, 'submitted');
-  assert.deepEqual(after.references, { ingredients: [REF_A, 'uploaded--pics-face-png'], firstFrame: null, lastFrame: null });
 });
 
 test('an Ingredients job whose composer attached the wrong references fails and never clicks', async () => {
