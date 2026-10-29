@@ -505,7 +505,7 @@
 
   async function choose(name) {
     const r = radio(name);
-    if (!r) throw new Error(`Setting "${name}" not found`);
+    if (!r) throw new Error(`Setting "${name}" not found (the settings panel offers ${radios().map((o) => JSON.stringify(o.name)).join(', ') || 'nothing'})`);
     if (r.checked) return;
     r.el.click();
     await waitFor(() => radio(name)?.checked, { what: `"${name}" to be selected` });
