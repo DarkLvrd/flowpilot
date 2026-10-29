@@ -1,4 +1,4 @@
-// The README's claim about how many MCP tools exist is a fact about this build, so it is checked
+// The user guide's claim about how many MCP tools exist is a fact about this build, so it is checked
 // against the published list (helper/lib/mcp.js TOOL_NAMES) instead of drifting. The count is
 // stated exactly once — where the tools are listed — so no later paragraph can disagree with
 // `flowpilot doctor`, which prints TOOL_NAMES.length at runtime.
@@ -14,11 +14,11 @@ const NUMBER_WORDS = {
   eighteen: 18, nineteen: 19, twenty: 20,
 };
 
-test('the README states the MCP tool count once, and it is the published count', () => {
-  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+test('the user guide states the MCP tool count once, and it is the published count', () => {
+  const readme = readFileSync(new URL('../../docs/USER-GUIDE.md', import.meta.url), 'utf8');
   const stated = [...readme.matchAll(/([A-Za-z]+)\s+tools\b/g)]
     .map((m) => ({ word: m[1], count: NUMBER_WORDS[m[1].toLowerCase()] }))
     .filter((m) => m.count != null);
-  assert.equal(stated.length, 1, `the README must state the tool count exactly once; found ${stated.length}: ${stated.map((s) => `${s.word} tools`).join(', ') || 'none'}`);
-  assert.equal(stated[0].count, TOOL_NAMES.length, `the README says "${stated[0].word} tools" but the MCP server publishes ${TOOL_NAMES.length}`);
+  assert.equal(stated.length, 1, `the user guide must state the tool count exactly once; found ${stated.length}: ${stated.map((s) => `${s.word} tools`).join(', ') || 'none'}`);
+  assert.equal(stated[0].count, TOOL_NAMES.length, `the user guide says "${stated[0].word} tools" but the MCP server publishes ${TOOL_NAMES.length}`);
 });

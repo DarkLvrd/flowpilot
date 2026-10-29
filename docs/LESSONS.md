@@ -1,4 +1,4 @@
-# Flow Extension v2 — lessons from what broke before
+# Lessons from earlier Flow extensions
 
 Sources: the old extension (`flow-agent-src/flow-extension/`, a copy of kodelyx/flow-agent),
 the local FlowKit clone (`flowkit/extension/`), `AGENTS.md`, and the research report
@@ -74,7 +74,7 @@ Each lesson is stated as: **what went wrong → the rule v2 follows.**
 
 13. **Uploads are slow and fragile** (~90 s to show in the grid; navigating/Escape cancels them;
     the sidebar "Add media" upload reports success but uploads nothing).
-    → Use the asset picker's `Upload media` control; **don't wait for the grid** — read the new
+    → Use the asset picker's `Upload media` control; **don't wait for the grid**; read the new
     media id from the project-media RPC (`Zzl0ze`); never navigate while an upload is in flight.
 
 14. **Clips can't be found by grid position.** Video tiles have no `data-media-id`; the grid is a

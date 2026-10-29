@@ -1,4 +1,4 @@
-# Flow Pilot — agent notes
+# Flow Pilot agent notes
 
 Chromium extension + local helper that drives Google Flow for one account, for people and agents.
 

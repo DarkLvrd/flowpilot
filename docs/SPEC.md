@@ -1,4 +1,4 @@
-# Flow Pilot — spec
+# Flow Pilot spec
 
 Settled in a grilling session on 2026-09-27. `docs/LESSONS.md` is the list of past failures this
 design answers; read it first.
@@ -20,13 +20,13 @@ account**, driven by a person or by any agent.
 | 5 | Files | Default `Downloads/FlowPilot/<project>/<job-name>.<ext>`; a **Choose folder** picker (File System Access API) for any folder; with the helper, a job may name **any absolute path**. |
 | 6 | Agent access | Any agent (Pi, firstmate, Claude, others) drives it through the helper: **CLI**, **MCP server**, and **local HTTP API** on `127.0.0.1`. The extension works fully without the helper for people. |
 | 7 | Approvals | **Step mode**: each job waits for approval after the previous result is shown. **Batch mode**: a list is approved once and crewmates run scenes in parallel. Agents may approve on the user's behalf. |
-| 8 | Credit guard | Cost shown per job and per batch before starting. A **session credit cap**; nothing is submitted past it. **Only the dashboard can set or raise the cap** — agents cannot. |
-| 9 | Bridge security | Helper listens on `127.0.0.1` only. Agents pair with a one-time code shown in the dashboard and then hold a key. Only jobs and results cross the bridge — never cookies or auth tokens. |
+| 8 | Credit guard | Cost shown per job and per batch before starting. A **session credit cap**; nothing is submitted past it. **Only the dashboard can set or raise the cap**; agents cannot. |
+| 9 | Bridge security | Helper listens on `127.0.0.1` only. Agents pair with a one-time code shown in the dashboard and then hold a key. Only jobs and results cross the bridge, never cookies or auth tokens. |
 | 10 | Accounts | **One** Google account at a time; many crewmates share it. |
 | 11 | Tabs | **One work tab.** The extension submits every job from that tab, navigating between projects only when no upload is in flight. Status and downloads go through Flow's API, so they need no extra tabs. The extension never opens more tabs, never reloads, never closes tabs it doesn't own; the work tab is marked non-discardable while jobs run. |
 | 12 | Projects | Each job names its Flow project; crewmates may share one or use their own. Results are tracked by id, never by grid position. |
 | 13 | Detection | On Flow open, a **self-check** verifies composer, mode controls, settings, Generate, and the page's own data calls, and shows ✅/❌. The generate-response shape is **learned from the first real job**; unknown shapes fail closed with "Flow changed". |
-| 14 | Packaging | Its own repo, MIT. Extension loaded unpacked; helper via `npx flowpilot`; `flowpilot doctor` checks setup. Private GitHub until the owner says otherwise. No Chrome Web Store for now. |
+| 14 | Packaging | Its own repo, MIT. Extension loaded unpacked; helper via `npx flowpilot`; `flowpilot doctor` checks setup. Public on GitHub (github.com/DarkLvrd/flowpilot) since 2026-10-29. No Chrome Web Store for now. |
 
 ## Hard rules (non-negotiable)
 
